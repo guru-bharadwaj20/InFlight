@@ -1,0 +1,33 @@
+# Environment
+.env
+.env.local
+*.env
+!.env.example
+
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Prisma
+prisma/.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker volumes (if bind-mounted locally)
+.docker-data/

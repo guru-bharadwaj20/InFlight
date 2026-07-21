@@ -1,0 +1,87 @@
+// Schema for the non-blocking concurrent LLM chat.
+//
+// This file is the single source of truth for the database shape. Prisma owns
+// migrations; the FastAPI backend reads and writes the same tables through
+// SQLAlchemy (see backend/app/models.py, which must be kept in sync).
+//
+// The concurrency-control design lives in the Message model: `submittedAt`
+// controls display order, `completedAt` controls commit order, and
+// `contextCutoff` is the MVCC read snapshot taken when a job starts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  // @updatedAt alone is applied by the Prisma client, which leaves the column
+  // NOT NULL with no database default — every non-Prisma writer would have to
+  // remember it. @default(now()) gives it one.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  messages Message[]
+
+  @@map("conversations")
+}
+
+/// A Message row is really a *job*, not just a chat bubble. A user message is a
+/// job that is born complete; an assistant message is a job that is scheduled,
+/// streams, and then commits.
+model Message {
+  id             String @id @default(cuid())
+  conversationId String @map("conversation_id")
+
+  /// "user" | "assistant"
+  role String
+
+  /// Null until the job finishes; filled incrementally in Redis while streaming.
+  content String?
+
+  /// "pending" | "streaming" | "complete" | "error" | "cancelled"
+  status String @default("pending")
+
+  /// When the user hit send. Controls DISPLAY order.
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(3)
+
+  /// When generation finished. Controls COMMIT order — a row is only visible as
+  /// context to jobs whose contextCutoff is after this timestamp.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  /// Snapshot taken when the job starts: only messages completed strictly before
+  /// this instant are visible to it as context. This one column is the whole
+  /// MVCC idea.
+  contextCutoff DateTime @map("context_cutoff") @db.Timestamptz(3)
+
+  /// "auto" | "chained" | "independent" — manual override (Stage 8).
+  dependencyMode String @default("auto") @map("dependency_mode")
+
+  /// Set when the user explicitly chained this prompt to an earlier one (Stage 8).
+  parentMessageId String? @map("parent_message_id")
+
+  /// Usage, captured from the API response on completion (Stage 5).
+  promptTokens     Int?    @map("prompt_tokens")
+  completionTokens Int?    @map("completion_tokens")
+  model            String?
+
+  /// Populated when status = "error" (Stage 10).
+  error String?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  parent       Message?     @relation("MessageChain", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  children     Message[]    @relation("MessageChain")
+
+  // Display order: the message list is always read in submittedAt order.
+  @@index([conversationId, submittedAt])
+  // Context assembly: "everything completed before my cutoff".
+  @@index([conversationId, completedAt])
+  // Finding in-flight jobs for a conversation (reconnect, concurrency cap).
+  @@index([conversationId, status])
+  @@map("messages")
+}

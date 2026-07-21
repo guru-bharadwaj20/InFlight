@@ -1,0 +1,103 @@
+name: concurrent-chat
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chat}
+      POSTGRES_DB: ${POSTGRES_DB:-concurrent_chat}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chat} -d ${POSTGRES_DB:-concurrent_chat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the services are reachable by name, so these
+      # override the localhost URLs in .env (which the host-side Prisma CLI uses).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chat}:${POSTGRES_PASSWORD:-chat}@postgres:5432/${POSTGRES_DB:-concurrent_chat}
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-claude-opus-4-8}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-claude-haiku-4-5}
+      MAX_CONCURRENT_JOBS_PER_CONVERSATION: ${MAX_CONCURRENT_JOBS_PER_CONVERSATION:-8}
+      CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/scripts:/app/scripts
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # Read by the browser, so these are host URLs — not compose service names.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
+      NEXT_PUBLIC_WS_URL: ws://localhost:${BACKEND_PORT:-8000}/ws
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      # Keep the image's install and build cache from being shadowed by the bind mount.
+      - frontend-node-modules:/app/node_modules
+      - frontend-next-cache:/app/.next
+
+  # One-shot Prisma runner, so migrations work without a host Node install:
+  #   docker compose --profile tools run --rm migrate
+  #
+  # Debian, not Alpine: Prisma's schema engine is a native binary that needs
+  # glibc and OpenSSL, and fails to start on musl.
+  migrate:
+    profiles: ["tools"]
+    image: node:22-slim
+    working_dir: /workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chat}:${POSTGRES_PASSWORD:-chat}@postgres:5432/${POSTGRES_DB:-concurrent_chat}
+    volumes:
+      - ./prisma:/workspace/prisma
+      - ./package.json:/workspace/package.json
+    command: >
+      sh -c "command -v openssl >/dev/null 2>&1 ||
+             { apt-get update -qq && apt-get install -y -qq --no-install-recommends openssl >/dev/null; };
+             npx --yes prisma@5 migrate deploy"
+
+volumes:
+  postgres-data:
+  redis-data:
+  frontend-node-modules:
+  frontend-next-cache:
