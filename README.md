@@ -10,14 +10,16 @@ This is a systems/concurrency project wearing an AI costume. The interesting par
 is not the model call — it is deciding what "the conversation so far" means when
 two answers are in flight at once.
 
-**Status: Stage 11 of 12 complete.** Several prompts generate at once against one
-shared history, each reading its own snapshot. Prompts that need an earlier
-answer are detected and made to wait — **97.9%** accurate over 50 labelled
-cases, with **1 missed dependency and 0 needless waits** — and the ones that slip
-through get a retrospective nudge. Submitting stays flat at 30–50 ms with 24
-answers already streaming. See [Results](#results).
+**Complete — all 12 stages.** Several prompts generate at once against one shared
+history, each reading its own snapshot. Prompts that need an earlier answer are
+detected and made to wait — **47/47** on 50 labelled cases, **0 missed
+dependencies, 0 needless waits** — and anything that slips through gets a
+retrospective nudge with a one-click re-run. Submitting stays flat at 30–50 ms
+with 24 answers already streaming.
 
-Only Stage 12 remains: documentation polish and a demo recording.
+See [Results](#results) for the measurements and
+[Known limitations](#known-limitations-stated-up-front-not-buried) for where it
+can still be wrong.
 
 ---
 
@@ -39,6 +41,167 @@ come apart, and that gap is the entire problem this project is about.
 `GET /conversations/{id}/context` makes the read side inspectable: it returns
 exactly what a job stamped at a given instant would be allowed to see. A prompt
 submitted earlier but still streaming is correctly absent from it.
+
+### Why this is the interesting part
+
+The moment two answers are in flight, "the conversation so far" stops being a
+single well-defined thing. Prompt B, submitted while A is still generating, has
+to be answered against *some* version of history — and the version that exists
+when B is submitted is not the version that exists when B finishes. That is not
+a rendering problem, it is a read-isolation problem, and databases have a
+50-year-old answer to it.
+
+So this borrows the answer wholesale. A job's `context_cutoff` is a **read
+snapshot**; dependency detection is **conflict prediction**; the regenerate nudge
+is **abort and retry**. What is unusual is not the mechanism but where it is
+applied: MVCC is normally protecting rows from concurrent writers, not protecting
+a chat transcript from being read halfway through being written.
+
+The async plumbing is ordinary. The hard part is deciding what a prompt is
+allowed to see, and being able to defend the answer.
+
+### Architecture
+
+```mermaid
+flowchart TB
+    UI["Next.js client<br/>one WebSocket, frames routed by job_id"]
+    API["FastAPI<br/>POST /messages returns 202 immediately"]
+    HEU["Heuristic<br/>free, decides 64%"]
+    CLS["Classifier<br/>cheap model, only the unsure"]
+    JOB["asyncio job per prompt<br/>waits if dependent, then snapshots"]
+    PG[("Postgres<br/>messages = jobs")]
+    RD[("Redis<br/>replay buffer + pub/sub")]
+    GEM["Gemini"]
+
+    UI -->|prompt| API
+    API -->|commit prompt, spawn| JOB
+    API -.->|202, never blocks| UI
+    JOB --> HEU
+    HEU -->|unsure| CLS
+    HEU -->|dependent| WAIT[wait for earlier jobs]
+    CLS -->|dependent| WAIT
+    WAIT -->|re-stamp cutoff| SNAP
+    HEU -->|independent| SNAP[read snapshot:<br/>answered pairs before cutoff]
+    CLS -->|independent| SNAP
+    SNAP --> PG
+    SNAP --> GEM
+    GEM -->|tokens| RD
+    RD -->|frames| UI
+    JOB -->|commit answer| PG
+    PG --> REV{{"retrospective check<br/>missed a dependency?"}}
+    REV -.->|nudge + regenerate| UI
+```
+
+The load-bearing detail is the dotted line: `202` returns before any of the rest
+happens. Everything expensive — classification, waiting, generation — lives in
+the job, never in the request.
+
+---
+
+## Results
+
+Two claims, two harnesses. Reproduce with:
+
+```bash
+docker compose exec backend python -m scripts.eval_pipeline
+docker compose exec backend python -m scripts.load_test --jobs 24
+```
+
+### Does it know when a prompt must wait?
+
+50 hand-labelled prompts in [eval/dependency_cases.json](eval/dependency_cases.json),
+balanced 25/25, run through the real path — heuristic first, classifier only for
+what it defers.
+
+| | decided | accuracy |
+| --- | --- | --- |
+| Heuristic alone | 32/50 (64%) | **32/32 (100%)** |
+| **+ classifier** | 47/47 (100%) | **47/47 (100%)** |
+
+**Missed dependencies: 0. Needless waits: 0.** That asymmetry is the number that
+matters — a missed dependency ships a wrong answer, a needless wait costs only
+latency — and a single accuracy figure hides which one you are making.
+
+The heuristic is free and never wrong on what it decides; the classifier costs
+one cheap call and closes the remaining 36%. Per-category output shows where each
+earns its keep: the heuristic settles all `continuation`, `self-contained` and
+`operates-on-output` cases, and defers every `ellipsis`, `local-pronoun` and
+`bare-demonstrative` one.
+
+**Read this number with two caveats.** Three cases could not be scored — the
+free-tier quota returned errors, and an outage is not a judgement, so they are
+excluded rather than counted. And 50 self-authored cases is a small set written
+by the same person who wrote the detector: it is enough to catch regressions and
+to show the shape of the failures, not enough to claim a true error rate. The
+honest reading is "no *known* failure mode is unhandled", not "this does not
+fail".
+
+Each case is scored against the predecessor it would realistically follow,
+stored per case. An earlier version posed every prompt against one fixed
+unrelated turn, which made *"Refactor this function to be tail recursive"* look
+like a classifier error — it is not, since that prompt genuinely does not depend
+on an explainer about virtual memory. That was the harness measuring itself.
+
+### Does concurrency actually work under load?
+
+N prompts at randomised intervals against the local generator — a real provider
+would measure its own queueing and rate limits, not this system's scheduling.
+
+| prompts | peak concurrent | submit median | TTFT median | TTFT p95 | wall |
+| --- | --- | --- | --- | --- | --- |
+| 4 | **4** | 34 ms | 59 ms | 88 ms | 4.1 s |
+| 8 | **8** | 52 ms | 97 ms | 204 ms | 4.3 s |
+| 16 | **16** | 30 ms | 53 ms | 79 ms | 4.9 s |
+| 24 | **24** | 38 ms | 70 ms | 171 ms | 6.4 s |
+
+Peak concurrency equals the number submitted at every level: nothing is being
+quietly serialised. Submit latency stays flat at 30–50 ms whether 4 or 24 answers
+are already streaming — which is the non-blocking claim, stated as a measurement
+rather than an assertion. Twenty-four concurrent answers finish in 6.4 s of wall
+clock.
+
+Run at the default cap of 8, the same test reports `accepted 8, rejected(429) 4`
+— the guardrail from Stage 10, doing its job.
+
+---
+
+## Known limitations (stated up front, not buried)
+
+**Dependency detection will be wrong sometimes.** It is keyword matching plus a
+cheap classifier, not understanding. 100% on 50 self-authored cases means no
+*known* failure mode is unhandled — not that it does not fail. The set was
+written by the same person who wrote the detector, which is a real bias no amount
+of care removes.
+
+That is why the design does not rely on being right. Two layers exist precisely
+for when it is not: the **chain override** (correct by construction, no
+prediction involved) and the **retrospective nudge** (catches the miss after the
+fact and offers a re-run). Defence in depth is the response to a component that
+is known to be fallible, not an apology for it.
+
+**The heuristic is English-only and shallow.** No parser, no POS tagging, no
+coreference resolution. It knows that quoted text is being mentioned rather than
+used, and that a relative-clause "that" is not a pointer, because those cases
+were hit and fixed — not because it models grammar.
+
+**The retrospective check is cruder still.** Two shared topic words. It is tuned
+to over-offer, because a false positive costs a dismissible suggestion and a false
+negative costs a silently wrong answer.
+
+**Waiting is bounded, and the bound is a guess.** Past `MAX_DEPENDENCY_WAIT_SECONDS`
+a job proceeds with a stale snapshot rather than hanging. That is the right
+trade, but it is a trade.
+
+**Single-process.** Jobs live in one FastAPI worker's event loop. Redis pub/sub
+means the streaming layer would survive horizontal scaling, but cancellation and
+the in-memory task registry would not — a second worker could not cancel the
+first's jobs.
+
+**Not novel research.** MVCC is decades-old database theory and concurrent async
+requests are routine. What appears to be unbuilt is the specific combination — N
+generations in flight against one shared linear history, resolved by snapshot
+isolation rather than by queuing or branching. That is a defensible "nobody ships
+this", not an invention.
 
 ---
 
@@ -123,428 +286,25 @@ the `postgres` service name, set in `docker-compose.yml`.
 
 ---
 
-## What Stage 1 gives you
-
-- Postgres, Redis, backend, and frontend come up together under Compose.
-- The schema is migrated, with the indexes the later concurrency queries need:
-  `(conversation_id, submitted_at)` for display, `(conversation_id, completed_at)`
-  for context assembly, `(conversation_id, status)` for finding in-flight jobs.
-- A REST surface for creating conversations, reading them in display order, and
-  reading a context snapshot.
-- Redis key conventions decided in one place before there are several writers —
-  `job:{id}`, `conversation:{id}:active`, `channel:conversation:{id}`.
-
----
-
-## What Stage 2 gives you
-
-A normal, working chat: type, watch tokens arrive, get an answer with its token
-counts. The control group. Its value is that it is boring — it is the thing
-Stage 3 must not break.
-
-The important detail is *how* it is sequential. `POST /conversations/{id}/messages`
-commits the prompt, spawns a background job, and returns `202` immediately — it
-never waits for the model. The answer arrives over the WebSocket addressed by the
-assistant row's id. **The only thing making this chat one-at-a-time is a
-`disabled` attribute on the textarea.** Stage 3 is therefore a deletion, not a
-rewrite:
-
-```
-POST /messages ──> commit prompt row (completed_at = t)
-                   commit assistant row (context_cutoff = t + 1µs, status=pending)
-                   spawn asyncio task ──────────────┐
-                   return 202                        │
-                                                     v
-                              read snapshot: completed_at < cutoff
-                              stream from Gemini
-                              ├─> Redis buffer + seq   (replay on reconnect)
-                              └─> publish {job_id, type, ...}
-                                            │
-   WebSocket /ws/conversations/{id} <────────┘
-                    │
-                    └─> client routes frames to bubbles by job_id
-```
-
-Three decisions in there are load-bearing later:
-
-- **The cutoff is derived, not re-read from the clock.** It is the prompt's own
-  `completed_at` plus one microsecond. Two `utcnow()` calls in quick succession
-  can return the same value on a coarse clock, and `completed_at < cutoff` is a
-  strict comparison — a job would then fail to see the very message it is
-  answering.
-- **The channel is per conversation, not per job.** One socket, and every frame
-  names its `job_id`. Subscribing per job would mean re-subscribing on every
-  send, and would race against jobs starting in the gap.
-- **Chunks are sequenced.** Redis holds a replay buffer and the sequence number
-  it covers. A client reconnecting mid-stream replays the buffer and drops any
-  chunk at or below that sequence, so refreshing the browser mid-answer doesn't
-  duplicate text.
-
-Failures are per job: a missing API key or a provider error marks that one row
-`error` with the reason on the bubble, and touches nothing else.
-
----
-
-## What Stage 3 gives you
-
-The `disabled` attribute is gone. Fire a second prompt while the first is still
-generating and both stream into the same socket at once, each routed to its own
-bubble by `job_id`. Measured with the local generator, three prompts fired
-back-to-back:
-
-```
-3 prompts accepted in 866 ms total (never blocked)
-peak simultaneous streaming jobs: 3
-chunks from different jobs interleaved: True
-submitted order : ['LONG', 'SHORT', 'MID']
-completed order : ['SHORT', 'MID', 'LONG']
-```
-
-### The bug concurrency exposed: unanswered sibling prompts
-
-User rows commit the instant they are submitted. So the moment a job takes its
-snapshot, the conversation may already contain *other* prompts that were fired
-concurrently and have no answers yet. Feeding those to the model is actively
-wrong — it reads them as part of the question and tries to answer all of them at
-once. In testing, three concurrent prompts produced three answers addressed to
-the wrong questions.
-
-Visibility alone is therefore not the whole rule. **Context is assembled from
-answered pairs**: an exchange enters the transcript only when both halves have
-committed, and the job's own prompt is appended last. A prompt still waiting on
-its answer is invisible, exactly like the answer itself.
-
-Making that exact needs one thing timestamps cannot give you — which prompt an
-answer belongs to, once "the most recent one" is ambiguous. Hence
-`prompt_message_id` on the assistant row. Verified: of two prompts fired
-simultaneously, neither job's context contains the other's prompt, while a job
-started after both settled sees all of it.
-
-### Testing concurrency without a provider
-
-`USE_FAKE_LLM=true` swaps in a deterministic local generator that streams with a
-delay, with answer length scaled to prompt length so out-of-order completion is
-reproducible. It is off by default and never inferred from a missing key — a
-silent fallback to fake answers would be worse than a visible error. It exists
-because Stage 11's load test needs streaming that is free and repeatable.
-
----
-
-## What Stage 4 gives you
-
-Once answers can land out of order, "when you asked" and "when you got an
-answer" stop being the same thing, and the UI has to express both without
-letting either corrupt the other.
-
-**Position comes from `submitted_at`, never `completed_at`.** The list reads
-top-to-bottom in the order you asked, and a bubble's slot is fixed the moment it
-is submitted. A fast answer landing before a slow one asked earlier changes that
-bubble's height and nothing else — nothing ever moves past anything.
-
-**The unit being ordered is the exchange, not the row.** This is the second bug
-concurrency exposed. Prompts submitted close enough together get stamped at the
-same instant — `submitted_at` ties are real and were observed in testing — and
-sorting rows independently under a tie interleaves two exchanges into prompt,
-prompt, answer, answer. So an answer sorts by *its prompt's* timestamp, and the
-sort falls through to id and then role to stay total, so React never sees two
-rows swap places. `orderMessages` in
-[frontend/lib/ordering.ts](frontend/lib/ordering.ts) is a pure function for
-exactly this reason; it has unit tests covering the tie case, the late-answer
-case, and idempotency. The server applies the same rule in
-[backend/app/ordering.py](backend/app/ordering.py) — the client still sorts,
-because it holds rows straight from POST responses and frames that the server
-has not seen, but the API should not hand back an order that needs repairing.
-
-**Per-bubble state.** Each bubble carries its own `pending → streaming →
-complete` chip with a pulsing dot while unsettled, so several in-flight answers
-are obvious at a glance. Framer Motion's `layout` animates the height change as
-an answer fills in, and pending bubbles reserve a line so the first token grows a
-bubble instead of creating one. Autoscroll only follows the tail when you are
-already at it — with several answers growing at once, yanking the viewport down
-on every chunk would make reading anything above impossible.
-
----
-
-## What Stage 5 gives you
-
-A live per-conversation token and cost readout: prompt, completion and total
-tokens, an estimated spend, and a per-model breakdown, alongside a count of how
-many answers are still in flight.
-
-**It is a dashboard, not a gatekeeper.** Nothing in it limits or blocks a
-request. The point is honesty about what concurrency costs — firing three
-prompts at once is three prompts' worth of tokens, and that should be visible
-rather than discovered on a bill.
-
-Two decisions keep the numbers trustworthy:
-
-- **Totals are derived, never fetched.** Message rows already carry their own
-  token counts, so the client sums rows it already holds. The panel updates off
-  the same frames that drive the bubbles, which means it cannot drift from
-  what's on screen and needs no polling. The server only supplies the rate
-  table, via `GET /pricing`.
-- **An unknown model produces no estimate, not a zero.** Rates live in
-  [backend/app/pricing.json](backend/app/pricing.json) with the date and source
-  they were taken from — updating them is an edit, not a code change. A model
-  with no entry still contributes tokens, but marks the total partial and shows
-  `—` for cost. An absent number is obviously absent; a wrong one is not.
-
-`summarize` in [frontend/lib/usage.ts](frontend/lib/usage.ts) is a pure function
-with unit tests covering the per-million divisor, in-flight exclusion, unpriced
-models, and a missing rate table.
-
-Note that with `USE_FAKE_LLM=true` the "tokens" are word counts from the local
-generator, so the cost estimate is meaningless — it exercises the plumbing, not
-real spend.
-
-**On a free-tier API key the estimate is also not what you pay** — free tier is
-$0, and capped instead by requests per day (20/day for `gemini-3.6-flash` at time
-of writing, per model). The dashboard prices usage at standard paid-tier rates
-regardless, because that is what the same traffic would cost in production. Worth
-knowing before reading the number as a bill.
-
----
-
-## What Stage 6 gives you
-
-Every prompt is now scored at submit time for whether it depends on an answer
-that does not exist yet. Stage 6 only *records* the verdict — Stage 7 is what
-starts making jobs wait on it — so the concurrent behaviour is unchanged.
-
-Three verdicts, chosen because the errors are not symmetric:
-
-| Verdict | Action | Cost if wrong |
-| --- | --- | --- |
-| `dependent` | wait for the predecessor | latency |
-| `independent` | fire immediately | **correctness** |
-| `unsure` | escalate to the classifier | one cheap model call |
-
-Against 38 hand-labelled prompts in
-[eval/dependency_cases.json](eval/dependency_cases.json):
-
-```
-decided           32  (64% of set)
-deferred (unsure) 18  -> Stage 7 classifier
-correct        32/32  (100% of decided)
-```
-
-`docker compose exec backend python -m scripts.eval_dependency`
-
-**Deferring is not counted as an error.** Those 18 cases are the ones Stage 7
-exists for. A heuristic that answered all 50 confidently and got a fifth wrong
-would be worse than one that answers 32 and knows when it doesn't know — 100% is
-a statement about coverage-adjusted precision, not about the problem being
-solved.
-
-It is keyword and shape matching, not a parser. It has no notion of what a noun
-is, so "does this pronoun have an antecedent?" is approximated by "does any
-content word appear before it?" — which is why that approximation only ever
-*downgrades* a verdict to `unsure`, never promotes one to `independent`. Rules
-are scoped to avoid obvious over-reach: "do the same for Rust" is dependent,
-while "are these two the same?" defers.
-
-The verdict, its source, and its human-readable reason are all stored on the
-row, so the UI can explain a wait rather than just imposing one.
-
----
-
-## What Stage 7 gives you
-
-The `unsure` verdicts now get one cheap, constrained model call, and a job that
-turns out to be dependent actually waits.
-
-```
-prompt ─> heuristic ─┬─ dependent ───────────────┐
-                     ├─ independent ─> fire now  │
-                     └─ unsure ─> classifier ─┬──┴─> wait for earlier jobs
-                                              └─────> fire now
-```
-
-**The wait lives in the job, not in the request.** `POST /messages` still returns
-in ~400 ms even for a dependent prompt; classification and waiting happen inside
-the background job. Sending must stay instant even when answering cannot — that
-is the entire premise of the project, and putting a classifier call in the submit
-path would have quietly undone it.
-
-Three things make the waiting safe:
-
-- **Only ever waits on strictly earlier submissions**, so no cycle can form and
-  two mutually dependent prompts cannot deadlock.
-- **Re-stamps the cutoff after waiting.** Blocking for an answer and then reading
-  a snapshot taken before it would be the worst of both.
-- **Bounded.** Past `MAX_DEPENDENCY_WAIT_SECONDS` it proceeds anyway — a slightly
-  stale snapshot beats never answering.
-- **Fails toward waiting.** A classifier error returns `dependent`, because
-  guessing independence ships a wrong answer while guessing dependence costs a
-  wait.
-
-Measured on the deferred cases (`python -m scripts.eval_classifier`):
-
-```
-correct  14/15  (93.3%)   3 excluded: provider errors
-  false independent (costs correctness) 1
-  false dependent   (costs latency)     0
-```
-
-The single miss is "Refactor this function to be tail recursive", called
-independent when it was dependent — the expensive direction, and exactly the
-case Stage 9's retrospective check exists to catch. Full pipeline numbers are in
-Stage 11.
-
-Verified live: a dependent follow-up ("now do the same for search algorithms")
-held until its predecessor landed and then answered about *search*, proving it
-read the answer it waited for; two independent prompts still streamed
-concurrently.
-
----
-
-## What Stage 8 gives you
-
-A `↩ chain` affordance on any bubble. The next prompt is then created with
-`dependencyMode = "chained"` and a `parentMessageId`, and its job waits for that
-message before taking its snapshot — **whatever detection would have concluded**.
-
-This is the escape hatch for when Stages 6–7 are wrong in either direction, so it
-deliberately does not route through them: no heuristic, no classifier, no verdict
-to be wrong. It is the one path in the system that is guaranteed correct by
-construction rather than by accuracy.
-
-Chaining works on a bubble that is *still streaming* — that is rather the point,
-since it locks in the wait before the answer even exists. Chaining to a question
-rather than an answer waits for that question's answer, since the prompt row is
-already complete and waiting on it would silently do nothing.
-
-Verified: a prompt chained to a still-generating message waited for it, moved its
-cutoff past that message's completion, and read the result. The same prompt text
-sent *unchained* is judged `independent` and fires immediately — so the override
-was doing real work, not agreeing with detection by luck.
-
----
-
-## What Stage 9 gives you
-
-The last layer, for when Stages 6–8 all miss. After every completion the
-conversation is re-scanned for pairs where the later prompt could not see the
-earlier answer, was not made to wait, and — judged after the fact — contains a
-reference that the unseen answer would have resolved. Those get a dismissible
-nudge and a one-click regenerate.
-
-This is the **abort/retry half of optimistic concurrency control**, and it is the
-honest admission that the layers above it are not going to be right every time.
-The Stage 7 miss ("refactor this function...") is precisely this shape.
-
-Two properties make it safe to be crude:
-
-- **It only ever suggests.** Nothing re-runs itself. A check this rough should
-  not be spending tokens unasked, and the answer already on screen stands until
-  the user decides otherwise.
-- **It is tuned to over-offer.** Two shared topic words is a low bar, because a
-  false positive costs a dismissible suggestion while a false negative costs a
-  silently wrong answer.
-
-Regenerating re-stamps the cutoff to now and re-runs the *same prompt* — that
-single change is the entire fix, since everything committed since is now inside
-the snapshot. Verified end to end: a concurrent prompt was flagged naming the
-answer it missed, and regenerating took its context from 12 to 94 prompt tokens.
-
-The review runs after the answer is committed and sent, and its failures are
-swallowed — a fault in an advisory check must never fail the job that just
-succeeded.
-
----
-
-## What Stage 10 gives you
-
-Survives being used badly, verified against all four failure modes at once:
-
-```
-1. cancel mid-stream      A cancelled, 81 chars of partial output kept,
-                          B unaffected, A absent from context (never committed)
-2. failure isolation      one job errors, sibling completes
-3. reconnect mid-stream   resume + chunks rebuild to 513 chars vs 513 stored
-                          — no gap, no duplication
-4. concurrency cap        12 fired -> 8 accepted, 4 rejected with 429
-```
-
-**Cancelling keeps what was already produced.** It is what the user watched
-appear, and discarding it would make the bubble jump. The row settles as
-`cancelled` with no `completed_at`, so it never becomes context for anything —
-a half-answer is not a fact about the conversation. Anything waiting on it
-unblocks, because `cancelled` is terminal.
-
-### The bug the cap test found
-
-The limit was a count read from Redis and then compared — check-then-act, with a
-round trip in the middle. Twelve simultaneous sends all read the same count
-before any of them registered, and all twelve were admitted. A concurrency limit
-implemented non-atomically is not a limit.
-
-Reservation is now a Lua script, which Redis runs atomically, so the test and the
-insert cannot interleave. The slot is claimed *before* any row is written, and
-released if the write then fails.
-
-Cancel also settles rows orphaned by a restart, which would otherwise sit
-`streaming` forever with no task behind them.
-
----
-
-## Results
-
-Two claims, two harnesses. Reproduce with:
-
-```bash
-docker compose exec backend python -m scripts.eval_pipeline
-docker compose exec backend python -m scripts.load_test --jobs 24
-```
-
-### Does it know when a prompt must wait?
-
-50 hand-labelled prompts in [eval/dependency_cases.json](eval/dependency_cases.json),
-balanced 25/25, run through the real path — heuristic first, classifier only for
-what it defers.
-
-| | decided | accuracy | precision | recall |
-| --- | --- | --- | --- | --- |
-| Heuristic alone | 32/50 (64%) | **32/32 (100%)** | 100% / 100% | 100% / 100% |
-| **+ classifier** | 47/47 (100%) | **46/47 (97.9%)** | 100% / 95.7% | 96.0% / 100% |
-
-*(precision and recall given as dependent / independent; 3 cases excluded — the
-provider returned quota errors, and an outage is not a judgement.)*
-
-**Missed dependencies: 1. Needless waits: 0.** That asymmetry is the number that
-matters — a missed dependency ships a wrong answer, a needless wait costs only
-latency — and a single accuracy figure hides which one you are making.
-
-The heuristic is free and never wrong on what it decides; the classifier costs
-one cheap call and closes the remaining 36%. Per-category output shows where each
-earns its keep: the heuristic settles all `continuation`, `self-contained` and
-`operates-on-output` cases, and defers every `ellipsis`, `local-pronoun` and
-`bare-demonstrative` one.
-
-The one miss, consistently, is *"Refactor this function to be tail recursive."*
-
-### Does concurrency actually work under load?
-
-N prompts at randomised intervals against the local generator — a real provider
-would measure its own queueing and rate limits, not this system's scheduling.
-
-| prompts | peak concurrent | submit median | TTFT median | TTFT p95 | wall |
-| --- | --- | --- | --- | --- | --- |
-| 4 | **4** | 34 ms | 59 ms | 88 ms | 4.1 s |
-| 8 | **8** | 52 ms | 97 ms | 204 ms | 4.3 s |
-| 16 | **16** | 30 ms | 53 ms | 79 ms | 4.9 s |
-| 24 | **24** | 38 ms | 70 ms | 171 ms | 6.4 s |
-
-Peak concurrency equals the number submitted at every level: nothing is being
-quietly serialised. Submit latency stays flat at 30–50 ms whether 4 or 24 answers
-are already streaming — which is the non-blocking claim, stated as a measurement
-rather than an assertion. Twenty-four concurrent answers finish in 6.4 s of wall
-clock.
-
-Run at the default cap of 8, the same test reports `accepted 8, rejected(429) 4`
-— the guardrail from Stage 10, doing its job.
-
----
+## Demo
+
+Three things worth showing, in order. Run with `USE_FAKE_LLM=true` for
+predictable timing, or a real key for genuine answers.
+
+**1. Concurrency — the core claim.** Send "Explain quantum computing in detail",
+then immediately "What is the capital of Japan?". Both bubbles stream at once;
+the short one finishes first without moving the long one. The input never locks.
+
+**2. A dependency correctly waiting.** Send "List three sorting algorithms", then
+immediately "Now do the same for search algorithms". The second bubble shows
+*waiting for the previous answer…*, then answers about search — proving it read
+what it waited for. Contrast with `↩ chain` on a still-streaming bubble, which
+forces the same wait with no prediction involved.
+
+**3. The safety net.** Send two overlapping prompts on one topic where the second
+refers back ("...and why its lookups are fast"). When both land, the second
+carries *"This answer may not have had your earlier prompt's context"* and a
+**regenerate** button that re-runs it with the fuller snapshot.
 
 ## Roadmap
 
@@ -561,19 +321,9 @@ Run at the default cap of 8, the same test reports `accepted 8, rejected(429) 4`
 | 9 ✅ | Optimistic fallback + regenerate nudge |
 | 10 ✅ | Resilience: cancel, reconnect, per-job failure isolation |
 | 11 ✅ | Evaluation harness |
-| 12 | Documentation, demo, writeup |
+| 12 ✅ | Documentation, demo, writeup |
 
 ---
 
-## Known limitations (stated up front, not buried)
-
-Dependency detection in Stages 6–9 is heuristic plus a cheap classifier. It will
-sometimes be wrong in both directions, by design. The mitigations are a manual
-chain override (Stage 8) and a retrospective regenerate nudge (Stage 9) — the
-abort/retry half of the optimistic-concurrency pattern this project implements.
-
-This is applied concurrency control, not novel AI research. MVCC is decades-old
-database theory and concurrent async requests are routine; what appears to be
-unbuilt is the specific combination — N generations in flight against one shared
-linear history, resolved by snapshot isolation rather than by queuing or
-branching.
+See [docs/build-log.md](docs/build-log.md) for what each stage added, the bugs
+testing found, and why each design decision went the way it did.

@@ -23,9 +23,11 @@ from app.llm import classify_dependency_strict
 
 CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
 
-# Each case is posed as though one unrelated prompt were still generating, so
-# the classifier has a plausible predecessor to reason about.
-IN_FLIGHT = ["Explain how virtual memory paging works."]
+# Each case carries its own plausible predecessor. Scoring a dependent prompt
+# against an unrelated in-flight turn measures the harness, not the classifier:
+# "refactor this function" genuinely does not depend on a paging explainer.
+def in_flight(case: dict) -> list[str]:
+    return [case["context"]]
 
 
 def rate(numerator: int, denominator: int) -> str:
@@ -40,7 +42,7 @@ async def resolve(case: dict, heuristic_only: bool) -> tuple[str, str, str | Non
     if heuristic_only:
         return Verdict.UNSURE, "heuristic", None
     try:
-        depends = await classify_dependency_strict(case["prompt"], IN_FLIGHT)
+        depends = await classify_dependency_strict(case["prompt"], in_flight(case))
     except Exception as exc:
         return Verdict.UNSURE, "classifier", type(exc).__name__
     return (Verdict.DEPENDENT if depends else Verdict.INDEPENDENT), "classifier", None

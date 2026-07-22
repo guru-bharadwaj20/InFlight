@@ -18,9 +18,7 @@ from app.llm import classify_dependency_strict
 
 CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
 
-# Every case is posed as if one unrelated prompt were still generating, so the
-# classifier has something plausible to be asked about.
-IN_FLIGHT = ["Explain how virtual memory paging works."]
+# Each case carries the predecessor it would realistically follow.
 
 
 async def main() -> int:
@@ -32,7 +30,7 @@ async def main() -> int:
         return 0
 
     results = await asyncio.gather(
-        *[classify_dependency_strict(c["prompt"], IN_FLIGHT) for c in deferred],
+        *[classify_dependency_strict(c["prompt"], [c["context"]]) for c in deferred],
         return_exceptions=True,
     )
 

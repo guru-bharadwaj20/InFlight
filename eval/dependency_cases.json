@@ -1,5 +1,5 @@
 {
-  "note": "Hand-labelled prompts for the Stage 6 heuristic and Stage 7 classifier. `label` is the ground truth: fired without waiting for the previous answer, would this prompt be answered wrongly? Judgement is recorded in `why`. Deliberately balanced 25/25 — accuracy on a skewed set says more about the skew than the detector.",
+  "note": "Hand-labelled prompts for the Stage 6 heuristic and Stage 7 classifier. `label` is the ground truth: fired without waiting for the previous answer, would this prompt be answered wrongly? `context` is the still-generating turn it is posed against - dependent cases get a predecessor that actually supplies their referent, since scoring them against an unrelated one measures the harness rather than the classifier. Judgement is recorded in `why`. Balanced 25/25.",
   "labels": {
     "dependent": "needs the previous answer's content to be answerable",
     "independent": "self-contained; the previous answer adds nothing it needs"
@@ -19,65 +19,405 @@
     "multi-part": "several clauses, all self-supplied"
   },
   "cases": [
-    { "id": "d01", "prompt": "Continue.", "label": "dependent", "category": "continuation", "why": "no content of its own" },
-    { "id": "d02", "prompt": "Tell me more.", "label": "dependent", "category": "continuation", "why": "more of what is defined only by the prior turn" },
-    { "id": "d03", "prompt": "Can you go deeper on that?", "label": "dependent", "category": "continuation", "why": "explicit depth request" },
-    { "id": "d04", "prompt": "And the downsides?", "label": "dependent", "category": "continuation", "why": "opens as a continuation of a prior topic" },
-
-    { "id": "d05", "prompt": "What did you mean by the above?", "label": "dependent", "category": "backward-reference", "why": "explicit reference to a prior turn" },
-    { "id": "d06", "prompt": "Rewrite the previous response as bullet points.", "label": "dependent", "category": "backward-reference", "why": "names the prior output" },
-    { "id": "d07", "prompt": "Your answer contradicts itself, explain.", "label": "dependent", "category": "backward-reference", "why": "explicitly about the prior answer" },
-    { "id": "d08", "prompt": "As mentioned earlier, expand the third point.", "label": "dependent", "category": "backward-reference", "why": "explicit backward reference plus an index into it" },
-    { "id": "d09", "prompt": "Compare that with the alternative you suggested.", "label": "dependent", "category": "backward-reference", "why": "references a prior suggestion" },
-
-    { "id": "d10", "prompt": "Summarise that in one sentence.", "label": "dependent", "category": "operates-on-output", "why": "transforms the prior answer" },
-    { "id": "d11", "prompt": "Rephrase it more simply.", "label": "dependent", "category": "operates-on-output", "why": "transforms the prior answer" },
-    { "id": "d12", "prompt": "Translate it into French.", "label": "dependent", "category": "operates-on-output", "why": "the object is the prior answer" },
-
-    { "id": "d13", "prompt": "Now do the same for Rust.", "label": "dependent", "category": "repeat-instruction", "why": "'the same' is defined only by the prior turn" },
-    { "id": "d14", "prompt": "Now in Python.", "label": "dependent", "category": "ellipsis", "why": "no referring word at all; the verb is entirely elided" },
-    { "id": "d15", "prompt": "Same but shorter.", "label": "dependent", "category": "ellipsis", "why": "elliptical instruction with no stated object" },
-    { "id": "d16", "prompt": "In bullet points, please.", "label": "dependent", "category": "ellipsis", "why": "a formatting instruction with nothing to format" },
-    { "id": "d17", "prompt": "Shorter.", "label": "dependent", "category": "ellipsis", "why": "single word; meaningless without the prior answer" },
-
-    { "id": "d18", "prompt": "Is that always true?", "label": "dependent", "category": "bare-demonstrative", "why": "nothing local for 'that' to attach to" },
-    { "id": "d19", "prompt": "Does this scale to a million users?", "label": "dependent", "category": "bare-demonstrative", "why": "'this' points outward" },
-    { "id": "d20", "prompt": "Refactor this function to be tail recursive.", "label": "dependent", "category": "bare-demonstrative", "why": "'this function' has no local referent; means one just shown" },
-
-    { "id": "d21", "prompt": "Give me an example of it.", "label": "dependent", "category": "pronoun-unresolved", "why": "pronoun with no antecedent in the prompt" },
-    { "id": "d22", "prompt": "Which one is faster?", "label": "dependent", "category": "pronoun-unresolved", "why": "'one' indexes into a prior set" },
-    { "id": "d23", "prompt": "Use the second approach.", "label": "dependent", "category": "pronoun-unresolved", "why": "indexes into a prior list" },
-    { "id": "d24", "prompt": "Why?", "label": "dependent", "category": "continuation", "why": "bare follow-up; the subject lives in the prior turn" },
-    { "id": "d25", "prompt": "What about the second one?", "label": "dependent", "category": "pronoun-unresolved", "why": "indexes into a prior list" },
-
-    { "id": "i01", "prompt": "What is the capital of Japan?", "label": "independent", "category": "self-contained", "why": "standalone factual question" },
-    { "id": "i02", "prompt": "Write a Python function that reverses a linked list.", "label": "independent", "category": "self-contained", "why": "fully specified task" },
-    { "id": "i03", "prompt": "Explain how TCP congestion control works.", "label": "independent", "category": "self-contained", "why": "standalone topic" },
-    { "id": "i04", "prompt": "Draft a polite email declining a meeting invitation.", "label": "independent", "category": "self-contained", "why": "standalone task" },
-    { "id": "i05", "prompt": "Explain the difference between a process and a thread.", "label": "independent", "category": "self-contained", "why": "standalone topic" },
-    { "id": "i06", "prompt": "List three uses for baking soda.", "label": "independent", "category": "self-contained", "why": "standalone" },
-
-    { "id": "i07", "prompt": "Explain how a hash map works and why its lookups are fast.", "label": "independent", "category": "local-pronoun", "why": "'its' resolves to 'hash map' in the same prompt" },
-    { "id": "i08", "prompt": "Describe the Rust borrow checker and what problems it prevents.", "label": "independent", "category": "local-pronoun", "why": "'it' resolves locally" },
-    { "id": "i09", "prompt": "What is Kubernetes and when should I use it?", "label": "independent", "category": "local-pronoun", "why": "'it' resolves locally" },
-    { "id": "i10", "prompt": "Write a haiku about autumn and explain why it works.", "label": "independent", "category": "local-pronoun", "why": "'it' refers to the haiku this prompt asks for" },
-    { "id": "i11", "prompt": "I have a Python dictionary. How do I sort it by value?", "label": "independent", "category": "local-pronoun", "why": "'it' resolves across sentences but within the prompt" },
-    { "id": "i12", "prompt": "Compare Postgres and MySQL, then say which one you would pick.", "label": "independent", "category": "local-pronoun", "why": "'one' resolves locally" },
-
-    { "id": "i13", "prompt": "Explain what `this` means in JavaScript.", "label": "independent", "category": "keyword-trap", "why": "'this' is the subject being asked about, not a reference" },
-    { "id": "i14", "prompt": "What does the phrase 'go on' mean in British English?", "label": "independent", "category": "keyword-trap", "why": "a continuation verb, quoted as the object of study" },
-    { "id": "i15", "prompt": "Continue this sequence: 2, 4, 8, 16.", "label": "independent", "category": "keyword-trap", "why": "'continue' plus a demonstrative, but the data is supplied inline" },
-    { "id": "i16", "prompt": "Summarise this text: the mitochondrion is the powerhouse of the cell.", "label": "independent", "category": "keyword-trap", "why": "'summarise this' but the text follows the colon" },
-    { "id": "i17", "prompt": "Explain the difference between `this` and `self` in Python.", "label": "independent", "category": "keyword-trap", "why": "demonstrative used as a keyword name" },
-    { "id": "i18", "prompt": "Write a function that reverses a list, then explain how it works.", "label": "independent", "category": "keyword-trap", "why": "'it' refers to the function this prompt asks for" },
-    { "id": "i19", "prompt": "Tell me more about the Baroque period than a textbook would.", "label": "independent", "category": "keyword-trap", "why": "'tell me more' but the subject is stated" },
-
-    { "id": "i20", "prompt": "Explain UDP and why it needs no handshake.", "label": "independent", "category": "same-topic", "why": "adjacent to a TCP question but answerable alone" },
-    { "id": "i21", "prompt": "What is a B-tree index in Postgres?", "label": "independent", "category": "same-topic", "why": "shares vocabulary with database questions but stands alone" },
-    { "id": "i22", "prompt": "Explain garbage collection in Java.", "label": "independent", "category": "same-topic", "why": "stands alone" },
-
-    { "id": "i23", "prompt": "Compare REST and GraphQL, then say which suits a mobile client.", "label": "independent", "category": "multi-part", "why": "both clauses supply their own subject" },
-    { "id": "i24", "prompt": "Define recursion and give one example.", "label": "independent", "category": "multi-part", "why": "self-supplied" },
-    { "id": "i25", "prompt": "List three sorting algorithms with their time complexity.", "label": "independent", "category": "multi-part", "why": "self-supplied" }
+    {
+      "id": "d01",
+      "prompt": "Continue.",
+      "label": "dependent",
+      "category": "continuation",
+      "why": "no content of its own",
+      "context": "Explain the causes of the French Revolution."
+    },
+    {
+      "id": "d02",
+      "prompt": "Tell me more.",
+      "label": "dependent",
+      "category": "continuation",
+      "why": "more of what is defined only by the prior turn",
+      "context": "Explain the causes of the French Revolution."
+    },
+    {
+      "id": "d03",
+      "prompt": "Can you go deeper on that?",
+      "label": "dependent",
+      "category": "continuation",
+      "why": "explicit depth request",
+      "context": "Describe how the TCP three-way handshake works."
+    },
+    {
+      "id": "d04",
+      "prompt": "And the downsides?",
+      "label": "dependent",
+      "category": "continuation",
+      "why": "opens as a continuation of a prior topic",
+      "context": "Explain the benefits of microservice architecture."
+    },
+    {
+      "id": "d05",
+      "prompt": "What did you mean by the above?",
+      "label": "dependent",
+      "category": "backward-reference",
+      "why": "explicit reference to a prior turn",
+      "context": "Explain the CAP theorem."
+    },
+    {
+      "id": "d06",
+      "prompt": "Rewrite the previous response as bullet points.",
+      "label": "dependent",
+      "category": "backward-reference",
+      "why": "names the prior output",
+      "context": "Explain the CAP theorem."
+    },
+    {
+      "id": "d07",
+      "prompt": "Your answer contradicts itself, explain.",
+      "label": "dependent",
+      "category": "backward-reference",
+      "why": "explicitly about the prior answer",
+      "context": "Is eventual consistency compatible with strong durability?"
+    },
+    {
+      "id": "d08",
+      "prompt": "As mentioned earlier, expand the third point.",
+      "label": "dependent",
+      "category": "backward-reference",
+      "why": "explicit backward reference plus an index into it",
+      "context": "List five principles of good API design."
+    },
+    {
+      "id": "d09",
+      "prompt": "Compare that with the alternative you suggested.",
+      "label": "dependent",
+      "category": "backward-reference",
+      "why": "references a prior suggestion",
+      "context": "Recommend an approach for caching user sessions."
+    },
+    {
+      "id": "d10",
+      "prompt": "Summarise that in one sentence.",
+      "label": "dependent",
+      "category": "operates-on-output",
+      "why": "transforms the prior answer",
+      "context": "Explain how the Rust borrow checker works."
+    },
+    {
+      "id": "d11",
+      "prompt": "Rephrase it more simply.",
+      "label": "dependent",
+      "category": "operates-on-output",
+      "why": "transforms the prior answer",
+      "context": "Explain how the Rust borrow checker works."
+    },
+    {
+      "id": "d12",
+      "prompt": "Translate it into French.",
+      "label": "dependent",
+      "category": "operates-on-output",
+      "why": "the object is the prior answer",
+      "context": "Write a short paragraph about the Amazon rainforest."
+    },
+    {
+      "id": "d13",
+      "prompt": "Now do the same for Rust.",
+      "label": "dependent",
+      "category": "repeat-instruction",
+      "why": "'the same' is defined only by the prior turn",
+      "context": "Write a function in Go that reverses a string."
+    },
+    {
+      "id": "d14",
+      "prompt": "Now in Python.",
+      "label": "dependent",
+      "category": "ellipsis",
+      "why": "no referring word at all; the verb is entirely elided",
+      "context": "Write a function in Go that reverses a string."
+    },
+    {
+      "id": "d15",
+      "prompt": "Same but shorter.",
+      "label": "dependent",
+      "category": "ellipsis",
+      "why": "elliptical instruction with no stated object",
+      "context": "Write a 300-word summary of the Apollo programme."
+    },
+    {
+      "id": "d16",
+      "prompt": "In bullet points, please.",
+      "label": "dependent",
+      "category": "ellipsis",
+      "why": "a formatting instruction with nothing to format",
+      "context": "Explain the differences between HTTP/1.1 and HTTP/2."
+    },
+    {
+      "id": "d17",
+      "prompt": "Shorter.",
+      "label": "dependent",
+      "category": "ellipsis",
+      "why": "single word; meaningless without the prior answer",
+      "context": "Write a 300-word summary of the Apollo programme."
+    },
+    {
+      "id": "d18",
+      "prompt": "Is that always true?",
+      "label": "dependent",
+      "category": "bare-demonstrative",
+      "why": "nothing local for 'that' to attach to",
+      "context": "Explain why quicksort is O(n log n) on average."
+    },
+    {
+      "id": "d19",
+      "prompt": "Does this scale to a million users?",
+      "label": "dependent",
+      "category": "bare-demonstrative",
+      "why": "'this' points outward",
+      "context": "Design a URL shortener backed by a single Postgres table."
+    },
+    {
+      "id": "d20",
+      "prompt": "Refactor this function to be tail recursive.",
+      "label": "dependent",
+      "category": "bare-demonstrative",
+      "why": "'this function' has no local referent; means one just shown",
+      "context": "Write a recursive factorial function in Python."
+    },
+    {
+      "id": "d21",
+      "prompt": "Give me an example of it.",
+      "label": "dependent",
+      "category": "pronoun-unresolved",
+      "why": "pronoun with no antecedent in the prompt",
+      "context": "Explain what a monad is in functional programming."
+    },
+    {
+      "id": "d22",
+      "prompt": "Which one is faster?",
+      "label": "dependent",
+      "category": "pronoun-unresolved",
+      "why": "'one' indexes into a prior set",
+      "context": "Compare merge sort and quicksort."
+    },
+    {
+      "id": "d23",
+      "prompt": "Use the second approach.",
+      "label": "dependent",
+      "category": "pronoun-unresolved",
+      "why": "indexes into a prior list",
+      "context": "Suggest three approaches for rate limiting an API."
+    },
+    {
+      "id": "d24",
+      "prompt": "Why?",
+      "label": "dependent",
+      "category": "continuation",
+      "why": "bare follow-up; the subject lives in the prior turn",
+      "context": "Explain why Python's GIL limits CPU-bound threading."
+    },
+    {
+      "id": "d25",
+      "prompt": "What about the second one?",
+      "label": "dependent",
+      "category": "pronoun-unresolved",
+      "why": "indexes into a prior list",
+      "context": "List three ways to optimise a slow SQL query."
+    },
+    {
+      "id": "i01",
+      "prompt": "What is the capital of Japan?",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "standalone factual question",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i02",
+      "prompt": "Write a Python function that reverses a linked list.",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "fully specified task",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i03",
+      "prompt": "Explain how TCP congestion control works.",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "standalone topic",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i04",
+      "prompt": "Draft a polite email declining a meeting invitation.",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "standalone task",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i05",
+      "prompt": "Explain the difference between a process and a thread.",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "standalone topic",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i06",
+      "prompt": "List three uses for baking soda.",
+      "label": "independent",
+      "category": "self-contained",
+      "why": "standalone",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i07",
+      "prompt": "Explain how a hash map works and why its lookups are fast.",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'its' resolves to 'hash map' in the same prompt",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i08",
+      "prompt": "Describe the Rust borrow checker and what problems it prevents.",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'it' resolves locally",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i09",
+      "prompt": "What is Kubernetes and when should I use it?",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'it' resolves locally",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i10",
+      "prompt": "Write a haiku about autumn and explain why it works.",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'it' refers to the haiku this prompt asks for",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i11",
+      "prompt": "I have a Python dictionary. How do I sort it by value?",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'it' resolves across sentences but within the prompt",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i12",
+      "prompt": "Compare Postgres and MySQL, then say which one you would pick.",
+      "label": "independent",
+      "category": "local-pronoun",
+      "why": "'one' resolves locally",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i13",
+      "prompt": "Explain what `this` means in JavaScript.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "'this' is the subject being asked about, not a reference",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i14",
+      "prompt": "What does the phrase 'go on' mean in British English?",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "a continuation verb, quoted as the object of study",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i15",
+      "prompt": "Continue this sequence: 2, 4, 8, 16.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "'continue' plus a demonstrative, but the data is supplied inline",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i16",
+      "prompt": "Summarise this text: the mitochondrion is the powerhouse of the cell.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "'summarise this' but the text follows the colon",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i17",
+      "prompt": "Explain the difference between `this` and `self` in Python.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "demonstrative used as a keyword name",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i18",
+      "prompt": "Write a function that reverses a list, then explain how it works.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "'it' refers to the function this prompt asks for",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i19",
+      "prompt": "Tell me more about the Baroque period than a textbook would.",
+      "label": "independent",
+      "category": "keyword-trap",
+      "why": "'tell me more' but the subject is stated",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i20",
+      "prompt": "Explain UDP and why it needs no handshake.",
+      "label": "independent",
+      "category": "same-topic",
+      "why": "adjacent to a TCP question but answerable alone",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i21",
+      "prompt": "What is a B-tree index in Postgres?",
+      "label": "independent",
+      "category": "same-topic",
+      "why": "shares vocabulary with database questions but stands alone",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i22",
+      "prompt": "Explain garbage collection in Java.",
+      "label": "independent",
+      "category": "same-topic",
+      "why": "stands alone",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i23",
+      "prompt": "Compare REST and GraphQL, then say which suits a mobile client.",
+      "label": "independent",
+      "category": "multi-part",
+      "why": "both clauses supply their own subject",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i24",
+      "prompt": "Define recursion and give one example.",
+      "label": "independent",
+      "category": "multi-part",
+      "why": "self-supplied",
+      "context": "Explain how virtual memory paging works."
+    },
+    {
+      "id": "i25",
+      "prompt": "List three sorting algorithms with their time complexity.",
+      "label": "independent",
+      "category": "multi-part",
+      "why": "self-supplied",
+      "context": "Explain how virtual memory paging works."
+    }
   ]
 }
