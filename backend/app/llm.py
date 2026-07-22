@@ -32,6 +32,40 @@ class LLMNotConfigured(RuntimeError):
     """Raised when no API key is set, so the job can report it as a normal error."""
 
 
+def describe_error(exc: BaseException) -> str:
+    """Turn a provider exception into something worth showing in a chat bubble.
+
+    The SDK raises with the whole error envelope embedded in the message —
+    nested JSON, quota metric names, help URLs. Dropping that verbatim into the
+    conversation tells the user nothing they can act on, so the cases that have
+    an actual remedy get told what it is. Anything unrecognised still surfaces,
+    truncated, rather than being swallowed.
+    """
+    text = str(exc)
+
+    if "RESOURCE_EXHAUSTED" in text or "429" in text:
+        model = get_settings().generation_model
+        return (
+            f"Rate limit reached for {model}. The free tier allows only a small "
+            "number of requests per day, per model. Wait for the quota to reset, "
+            "set GENERATION_MODEL to a model with headroom, or run with "
+            "USE_FAKE_LLM=true to exercise the app without the provider."
+        )
+    if "UNAVAILABLE" in text or "503" in text:
+        return "The model is temporarily unavailable upstream. Try again shortly."
+    if "PERMISSION_DENIED" in text or "API key not valid" in text or "401" in text:
+        return "The API key was rejected. Check GEMINI_API_KEY in .env."
+    if "NOT_FOUND" in text or "404" in text:
+        return (
+            f"Model '{get_settings().generation_model}' was not found. Check "
+            "GENERATION_MODEL names a model your key can reach."
+        )
+    if "SAFETY" in text or "blocked" in text.lower():
+        return "The provider blocked this response under its safety filters."
+
+    return f"{type(exc).__name__}: {text[:200]}"
+
+
 @dataclass
 class Turn:
     """One committed message from the snapshot, on its way into a prompt."""

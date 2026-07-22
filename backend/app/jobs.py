@@ -20,7 +20,14 @@ from . import dependency, redis_client
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
-from .llm import LLMNotConfigured, Turn, Usage, classify_dependency, stream_completion
+from .llm import (
+    LLMNotConfigured,
+    Turn,
+    Usage,
+    classify_dependency,
+    describe_error,
+    stream_completion,
+)
 from .models import DependencyMode, Message, Role, Status, utcnow
 
 logger = logging.getLogger(__name__)
@@ -471,7 +478,7 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 job,
                 conversation_id,
                 status=Status.ERROR,
-                error=f"{exc.__class__.__name__}: {exc}",
+                error=describe_error(exc),
                 usage=usage,
             )
 
