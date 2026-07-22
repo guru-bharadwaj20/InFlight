@@ -2,8 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import DependencyMode, Role, Status
-
 
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -41,14 +39,19 @@ class ConversationCreate(BaseModel):
     title: str | None = None
 
 
-class MessageCreate(BaseModel):
-    """Stage 1 only writes rows; Stage 2 gives this endpoint a generation path."""
-
+class PromptCreate(BaseModel):
     content: str = Field(min_length=1)
-    role: str = Role.USER
-    status: str = Status.COMPLETE
-    dependency_mode: str = DependencyMode.AUTO
-    parent_message_id: str | None = None
+
+
+class PromptAccepted(BaseModel):
+    """Both rows a prompt creates: the committed prompt, and the job answering it.
+
+    The assistant row is returned still `pending` — the answer itself arrives
+    over the WebSocket, keyed by `assistant_message.id`.
+    """
+
+    user_message: MessageOut
+    assistant_message: MessageOut
 
 
 class HealthOut(BaseModel):
@@ -57,4 +60,4 @@ class HealthOut(BaseModel):
     redis: str
     generation_model: str
     classifier_model: str
-    anthropic_key_configured: bool
+    gemini_key_configured: bool

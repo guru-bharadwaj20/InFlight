@@ -45,9 +45,9 @@ services:
       # override the localhost URLs in .env (which the host-side Prisma CLI uses).
       DATABASE_URL: postgresql://${POSTGRES_USER:-chat}:${POSTGRES_PASSWORD:-chat}@postgres:5432/${POSTGRES_DB:-concurrent_chat}
       REDIS_URL: redis://redis:6379/0
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GENERATION_MODEL: ${GENERATION_MODEL:-claude-opus-4-8}
-      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-claude-haiku-4-5}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-3.6-flash}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-gemini-3.5-flash-lite}
       MAX_CONCURRENT_JOBS_PER_CONVERSATION: ${MAX_CONCURRENT_JOBS_PER_CONVERSATION:-8}
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
     ports:

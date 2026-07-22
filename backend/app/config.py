@@ -9,9 +9,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://chat:chat@localhost:5432/concurrent_chat"
     redis_url: str = "redis://localhost:6379/0"
 
-    anthropic_api_key: str = ""
-    generation_model: str = "claude-opus-4-8"
-    classifier_model: str = "claude-haiku-4-5"
+    gemini_api_key: str = ""
+    generation_model: str = "gemini-3.6-flash"
+    # Deliberately a cheaper/faster model than the generation one: the Stage 7
+    # dependency check runs in the submit path, so its latency is a tax on every
+    # ambiguous prompt.
+    classifier_model: str = "gemini-3.5-flash-lite"
 
     max_concurrent_jobs_per_conversation: int = 8
 

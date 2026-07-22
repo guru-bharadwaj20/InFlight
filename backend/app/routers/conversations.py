@@ -1,17 +1,20 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import jobs, redis_client
+from ..config import Settings, get_settings
 from ..db import get_session
-from ..models import Conversation, Message, Role, Status
+from ..models import Conversation, Message, Role, Status, utcnow
 from ..schemas import (
     ConversationCreate,
     ConversationDetailOut,
     ConversationOut,
-    MessageCreate,
     MessageOut,
+    PromptAccepted,
+    PromptCreate,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -74,40 +77,78 @@ async def get_conversation(
 
 @router.post(
     "/{conversation_id}/messages",
-    response_model=MessageOut,
-    status_code=status.HTTP_201_CREATED,
+    response_model=PromptAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
 )
-async def create_message(
+async def send_prompt(
     conversation_id: str,
-    payload: MessageCreate,
+    payload: PromptCreate,
     session: AsyncSession = Depends(get_session),
-) -> Message:
-    """Write a message row directly.
+    settings: Settings = Depends(get_settings),
+) -> PromptAccepted:
+    """Commit the prompt, then hand its answer to a background job.
 
-    Stage 1 has no generation path, so this just persists a row — enough to
-    exercise the schema end to end. Stage 2 replaces the body with "insert the
-    user row, then spawn the assistant job".
+    This returns as soon as both rows exist — it does not wait for the model. The
+    answer arrives over the WebSocket, addressed by the assistant row's id. That
+    is what makes the input lock in Stage 2 a purely client-side choice: the
+    server is already willing to accept the next prompt immediately, and Stage 3
+    removes the lock without touching this handler.
     """
     await _load_conversation(session, conversation_id)
 
-    now = datetime.now(timezone.utc)
-    message = Message(
+    in_flight = await redis_client.active_job_count(conversation_id)
+    if in_flight >= settings.max_concurrent_jobs_per_conversation:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"{in_flight} jobs already in flight for this conversation",
+        )
+
+    submitted_at = utcnow()
+    user_message = Message(
         conversation_id=conversation_id,
-        role=payload.role,
+        role=Role.USER,
         content=payload.content,
-        status=payload.status,
-        submitted_at=now,
-        # The snapshot is taken at submit time: this job may only read messages
-        # that had already committed by this instant.
-        context_cutoff=now,
-        completed_at=now if payload.status == Status.COMPLETE else None,
-        dependency_mode=payload.dependency_mode,
-        parent_message_id=payload.parent_message_id,
+        status=Status.COMPLETE,
+        submitted_at=submitted_at,
+        completed_at=submitted_at,
+        context_cutoff=submitted_at,
     )
-    session.add(message)
+
+    # The cutoff has to land strictly after the prompt commits, or the job would
+    # not see the very message it is answering. Deriving it from the prompt's own
+    # timestamp rather than reading the clock twice makes that ordering exact:
+    # two `utcnow()` calls in quick succession can return the same value on a
+    # coarse system clock, and `completed_at < cutoff` is a strict comparison.
+    cutoff = submitted_at + timedelta(microseconds=1)
+    assistant_message = Message(
+        conversation_id=conversation_id,
+        role=Role.ASSISTANT,
+        content=None,
+        status=Status.PENDING,
+        submitted_at=cutoff,
+        context_cutoff=cutoff,
+        model=settings.generation_model,
+    )
+
+    session.add_all([user_message, assistant_message])
     await session.commit()
-    await session.refresh(message)
-    return message
+
+    # Registered here rather than inside the task so that the count above and the
+    # WebSocket's resume list both see the job the moment this returns, instead
+    # of only once the task happens to be scheduled.
+    await redis_client.set_job_state(
+        assistant_message.id,
+        status=Status.PENDING,
+        conversation_id=conversation_id,
+        seq=0,
+    )
+    await redis_client.register_active_job(conversation_id, assistant_message.id)
+    jobs.spawn(assistant_message.id, conversation_id)
+
+    return PromptAccepted(
+        user_message=MessageOut.model_validate(user_message),
+        assistant_message=MessageOut.model_validate(assistant_message),
+    )
 
 
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])

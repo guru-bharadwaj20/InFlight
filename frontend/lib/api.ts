@@ -1,6 +1,12 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+export const WS_BASE_URL =
+  process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws";
+
+export const conversationSocketUrl = (conversationId: string) =>
+  `${WS_BASE_URL}/conversations/${conversationId}`;
+
 export type MessageStatus =
   | "pending"
   | "streaming"
@@ -45,8 +51,35 @@ export interface Health {
   redis: string;
   generation_model: string;
   classifier_model: string;
-  anthropic_key_configured: boolean;
+  gemini_key_configured: boolean;
 }
+
+/** Both rows a prompt creates. The answer itself arrives over the WebSocket. */
+export interface PromptAccepted {
+  user_message: Message;
+  assistant_message: Message;
+}
+
+/**
+ * Frames are addressed by `job_id`, never by arrival order — with several jobs
+ * sharing one socket in Stage 3, order across jobs means nothing.
+ */
+export type Frame =
+  | { job_id: string; type: "status"; status: MessageStatus }
+  | { job_id: string; type: "chunk"; seq: number; text: string }
+  /** Sent on (re)connect for a job already streaming: the text so far. */
+  | { job_id: string; type: "resume"; status: MessageStatus; text: string; seq: number }
+  | {
+      job_id: string;
+      type: "done" | "error";
+      status: MessageStatus;
+      content: string | null;
+      error: string | null;
+      completed_at: string | null;
+      prompt_tokens: number | null;
+      completion_tokens: number | null;
+      model: string | null;
+    };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -77,13 +110,11 @@ export const api = {
   getConversation: (id: string) =>
     request<ConversationDetail>(`/conversations/${id}`),
 
-  createMessage: (
-    conversationId: string,
-    body: { content: string; role?: "user" | "assistant" }
-  ) =>
-    request<Message>(`/conversations/${conversationId}/messages`, {
+  /** Returns as soon as the rows exist — it does not wait for the model. */
+  sendPrompt: (conversationId: string, content: string) =>
+    request<PromptAccepted>(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ content }),
     }),
 
   /** What a job stamped at `at` would be allowed to read as context. */

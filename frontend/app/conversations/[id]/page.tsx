@@ -1,95 +1,150 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { api, type ConversationDetail, type Message } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, type Message } from "@/lib/api";
+import { useConversation } from "@/lib/useConversation";
 
 function formatTime(value: string | null) {
   if (!value) return "—";
-  return new Date(value).toISOString().replace("T", " ").slice(0, 23);
+  return new Date(value).toISOString().replace("T", " ").slice(11, 23);
 }
 
-function MessageRow({ message }: { message: Message }) {
+const STATUS_COLOR: Record<Message["status"], string> = {
+  pending: "text-pending",
+  streaming: "text-streaming",
+  complete: "text-complete",
+  error: "text-failed",
+  cancelled: "text-failed",
+};
+
+function Bubble({ message }: { message: Message }) {
+  const isUser = message.role === "user";
+  const streaming = message.status === "streaming" || message.status === "pending";
+
   return (
-    <li className="px-4 py-3">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="text-xs uppercase tracking-wide text-zinc-500">
-          {message.role}
-        </span>
-        <span className="font-mono text-[11px] text-zinc-600">
-          {message.status}
-        </span>
+    <li className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[80ch] rounded-2xl px-4 py-3 ${
+          isUser
+            ? "bg-zinc-100 text-zinc-900"
+            : "border border-zinc-800 bg-zinc-900/60 text-zinc-100"
+        }`}
+      >
+        {message.status === "error" ? (
+          <p className="text-sm text-failed">{message.error ?? "generation failed"}</p>
+        ) : (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+            {message.content}
+            {streaming && (
+              <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-streaming align-text-bottom" />
+            )}
+          </p>
+        )}
+
+        {!isUser && message.status !== "streaming" && (
+          <div
+            className={`mt-2 flex flex-wrap gap-x-3 font-mono text-[10px] ${
+              STATUS_COLOR[message.status]
+            }`}
+          >
+            <span>{message.status}</span>
+            {message.completion_tokens !== null && (
+              <span className="text-zinc-600">
+                {message.prompt_tokens} in / {message.completion_tokens} out
+              </span>
+            )}
+            {message.model && <span className="text-zinc-600">{message.model}</span>}
+            <span className="text-zinc-600">done {formatTime(message.completed_at)}</span>
+          </div>
+        )}
       </div>
-      <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-200">
-        {message.content ?? <span className="text-zinc-600">(no content yet)</span>}
-      </p>
-      <dl className="mt-2 grid grid-cols-1 gap-x-6 font-mono text-[11px] text-zinc-500 sm:grid-cols-3">
-        <div>submitted {formatTime(message.submitted_at)}</div>
-        <div>completed {formatTime(message.completed_at)}</div>
-        <div>cutoff {formatTime(message.context_cutoff)}</div>
-      </dl>
     </li>
   );
 }
 
-export default function ConversationPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const [conversation, setConversation] = useState<ConversationDetail | null>(null);
+function SnapshotInspector({ conversationId }: { conversationId: string }) {
   const [snapshot, setSnapshot] = useState<Message[] | null>(null);
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setConversation(await api.getConversation(params.id));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [params.id]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!draft.trim()) return;
-    setBusy(true);
-    try {
-      await api.createMessage(params.id, { content: draft.trim() });
-      setDraft("");
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSnapshot() {
-    try {
-      setSnapshot(await api.getContextSnapshot(params.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+  async function read() {
+    setSnapshot(await api.getContextSnapshot(conversationId));
+    setOpen(true);
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">
-          ← All conversations
-        </Link>
-        <h2 className="mt-2 text-lg font-semibold">
-          {conversation?.title ?? "Untitled conversation"}
-        </h2>
-        <p className="font-mono text-xs text-zinc-500">{params.id}</p>
+    <section className="rounded-lg border border-zinc-800 p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+            Context snapshot
+          </h3>
+          <p className="mt-1 text-xs text-zinc-600">
+            What a job stamped <em>now</em> would be allowed to read. Only rows
+            that <em>completed</em> before the cutoff are in it, so anything
+            still streaming is absent.
+          </p>
+        </div>
+        <button
+          onClick={read}
+          className="shrink-0 rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-900"
+        >
+          Read
+        </button>
       </div>
+
+      {open && snapshot && (
+        <ul className="mt-3 space-y-1 font-mono text-[11px] text-zinc-500">
+          {snapshot.length === 0 && <li>snapshot is empty</li>}
+          {snapshot.map((message) => (
+            <li key={message.id}>
+              {formatTime(message.completed_at)} · {message.role} ·{" "}
+              {(message.content ?? "").slice(0, 60)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+export default function ConversationPage({ params }: { params: { id: string } }) {
+  const { messages, title, connected, loading, error, busy, send } =
+    useConversation(params.id);
+  const [draft, setDraft] = useState("");
+  const bottom = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || busy) return;
+    setDraft("");
+    await send(content);
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
+      <header className="flex items-baseline justify-between gap-4">
+        <div>
+          <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">
+            ← All conversations
+          </Link>
+          <h2 className="mt-1 text-lg font-semibold">
+            {title ?? "Untitled conversation"}
+          </h2>
+        </div>
+        <span
+          className={`font-mono text-[11px] ${
+            connected ? "text-complete" : "text-failed"
+          }`}
+        >
+          {connected ? "socket connected" : "socket offline"}
+        </span>
+      </header>
 
       {error && (
         <p className="rounded border border-failed/40 bg-failed/10 p-3 text-sm text-failed">
@@ -97,70 +152,49 @@ export default function ConversationPage({
         </p>
       )}
 
-      <section>
-        <h3 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-400">
-          Messages, in submitted order
-        </h3>
-        {conversation && conversation.messages.length > 0 ? (
-          <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
-            {conversation.messages.map((message) => (
-              <MessageRow key={message.id} message={message} />
-            ))}
-          </ul>
+      <div className="flex-1 overflow-y-auto rounded-lg border border-zinc-800 p-4">
+        {loading ? (
+          <p className="text-sm text-zinc-500">Loading…</p>
+        ) : messages.length === 0 ? (
+          <p className="text-sm text-zinc-500">No messages yet. Say something.</p>
         ) : (
-          <p className="text-sm text-zinc-500">No messages yet.</p>
-        )}
-
-        <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
-          <input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Write a message row"
-            className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 disabled:opacity-50"
-          >
-            Insert
-          </button>
-        </form>
-        <p className="mt-2 text-xs text-zinc-600">
-          Stage 1 writes the row and stops — no model call yet. Generation
-          arrives in Stage 2.
-        </p>
-      </section>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
-            Context snapshot as of now
-          </h3>
-          <button
-            onClick={handleSnapshot}
-            className="rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-900"
-          >
-            Read snapshot
-          </button>
-        </div>
-        <p className="mb-3 text-xs text-zinc-600">
-          Only messages that <em>completed</em> before the cutoff are visible to
-          a job stamped at that instant — which is why this list can be shorter
-          than the one above.
-        </p>
-        {snapshot === null ? (
-          <p className="text-sm text-zinc-500">Not read yet.</p>
-        ) : snapshot.length === 0 ? (
-          <p className="text-sm text-zinc-500">Snapshot is empty.</p>
-        ) : (
-          <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
-            {snapshot.map((message) => (
-              <MessageRow key={message.id} message={message} />
+          <ul className="space-y-3">
+            {messages.map((message) => (
+              <Bubble key={message.id} message={message} />
             ))}
           </ul>
         )}
-      </section>
+        <div ref={bottom} />
+      </div>
+
+      <form onSubmit={submit} className="flex gap-2">
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) void submit(event);
+          }}
+          rows={1}
+          disabled={busy}
+          placeholder={busy ? "Waiting for the response…" : "Send a message"}
+          className="flex-1 resize-none rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600 disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={busy || !draft.trim()}
+          className="rounded bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 disabled:opacity-40"
+        >
+          Send
+        </button>
+      </form>
+
+      <p className="text-xs text-zinc-600">
+        The input is locked while a response streams. That lock is the
+        <em> only</em> thing making this chat sequential — the server already
+        accepts a new prompt at any time. Stage 3 deletes it.
+      </p>
+
+      <SnapshotInspector conversationId={params.id} />
     </div>
   );
 }

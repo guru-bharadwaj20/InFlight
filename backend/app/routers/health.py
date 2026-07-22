@@ -32,5 +32,5 @@ async def health(
         redis=redis_status,
         generation_model=settings.generation_model,
         classifier_model=settings.classifier_model,
-        anthropic_key_configured=bool(settings.anthropic_api_key),
+        gemini_key_configured=bool(settings.gemini_api_key),
     )

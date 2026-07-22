@@ -72,10 +72,10 @@ export default function HomePage() {
               <dd className="text-zinc-200">{health.redis}</dd>
             </div>
             <div className="flex items-center gap-2">
-              <StatusDot value={health.anthropic_key_configured ? "ok" : "unset"} />
-              <dt className="text-zinc-400">API key</dt>
+              <StatusDot value={health.gemini_key_configured ? "ok" : "unset"} />
+              <dt className="text-zinc-400">Gemini key</dt>
               <dd className="text-zinc-200">
-                {health.anthropic_key_configured ? "configured" : "not set"}
+                {health.gemini_key_configured ? "configured" : "not set"}
               </dd>
             </div>
             <div className="col-span-2 text-zinc-400 sm:col-span-3">
