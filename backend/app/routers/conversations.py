@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import dependency, jobs, redis_client
 from ..config import Settings, get_settings
 from ..db import get_session
+from ..ids import new_id
 from ..models import Conversation, DependencyMode, Message, Role, Status, utcnow
 from ..ordering import order_for_display
 from ..schemas import (
@@ -107,11 +108,18 @@ async def send_prompt(
                 "parent_message_id must name a message in this conversation",
             )
 
-    in_flight = await redis_client.active_job_count(conversation_id)
-    if in_flight >= settings.max_concurrent_jobs_per_conversation:
+    # The slot is claimed before any row is written, and the id is minted here so
+    # there is something to claim it with. Checking a count and then inserting
+    # would admit every one of N simultaneous sends, since they all read the
+    # same count before any of them registered.
+    job_id = new_id()
+    if not await redis_client.reserve_active_job(
+        conversation_id, job_id, settings.max_concurrent_jobs_per_conversation
+    ):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"{in_flight} jobs already in flight for this conversation",
+            f"already at the limit of {settings.max_concurrent_jobs_per_conversation} "
+            "concurrent answers for this conversation",
         )
 
     submitted_at = utcnow()
@@ -153,6 +161,7 @@ async def send_prompt(
         )
 
     assistant_message = Message(
+        id=job_id,
         conversation_id=conversation_id,
         role=Role.ASSISTANT,
         content=None,
@@ -167,23 +176,24 @@ async def send_prompt(
         dependency_reason=reason,
     )
 
-    session.add(user_message)
-    await session.flush()  # assigns the prompt id the job needs to point at
-    assistant_message.prompt_message_id = user_message.id
-    session.add(assistant_message)
-    await session.commit()
+    try:
+        session.add(user_message)
+        await session.flush()  # assigns the prompt id the job needs to point at
+        assistant_message.prompt_message_id = user_message.id
+        session.add(assistant_message)
+        await session.commit()
+    except Exception:
+        # The slot was claimed before the rows existed, so a failed write must
+        # give it back or the conversation leaks capacity until the TTL expires.
+        await redis_client.unregister_active_job(conversation_id, job_id)
+        raise
 
-    # Registered here rather than inside the task so that the count above and the
-    # WebSocket's resume list both see the job the moment this returns, instead
-    # of only once the task happens to be scheduled.
+    # Set before returning so the WebSocket's resume list sees the job the moment
+    # this responds, rather than only once the task happens to be scheduled.
     await redis_client.set_job_state(
-        assistant_message.id,
-        status=Status.PENDING,
-        conversation_id=conversation_id,
-        seq=0,
+        job_id, status=Status.PENDING, conversation_id=conversation_id, seq=0
     )
-    await redis_client.register_active_job(conversation_id, assistant_message.id)
-    jobs.spawn(assistant_message.id, conversation_id)
+    jobs.spawn(job_id, conversation_id)
 
     return PromptAccepted(
         user_message=MessageOut.model_validate(user_message),
@@ -244,6 +254,54 @@ async def regenerate(
     await redis_client.clear_buffer(message.id)
     await redis_client.register_active_job(conversation_id, message.id)
     jobs.spawn(message.id, conversation_id)
+    return message
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/cancel",
+    response_model=MessageOut,
+)
+async def cancel_message(
+    conversation_id: str,
+    message_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Stop one in-flight answer, keeping whatever it had already produced.
+
+    Cancelling is per job by construction — sibling jobs share nothing but the
+    conversation, so stopping one cannot disturb the others.
+    """
+    await _load_conversation(session, conversation_id)
+
+    message = await session.get(Message, message_id)
+    if message is None or message.conversation_id != conversation_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "message not found")
+    if message.status in Status.TERMINAL:
+        return message
+
+    if not await jobs.cancel(message_id):
+        # No task owns it — it was orphaned by a restart, so the row would sit
+        # "streaming" forever. Settle it here rather than leave it stuck.
+        message.status = Status.CANCELLED
+        message.error = "cancelled"
+        await session.commit()
+        await redis_client.unregister_active_job(conversation_id, message_id)
+        await redis_client.publish(
+            conversation_id,
+            message_id,
+            {
+                "type": "error",
+                "status": Status.CANCELLED,
+                "content": message.content,
+                "error": "cancelled",
+                "completed_at": None,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "model": message.model,
+            },
+        )
+
+    await session.refresh(message)
     return message
 
 

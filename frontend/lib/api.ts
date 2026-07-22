@@ -167,6 +167,13 @@ export const api = {
       body: JSON.stringify({ content, parent_message_id: parentMessageId ?? null }),
     }),
 
+  /** Stop one in-flight answer, keeping whatever it already produced. */
+  cancel: (conversationId: string, messageId: string) =>
+    request<Message>(
+      `/conversations/${conversationId}/messages/${messageId}/cancel`,
+      { method: "POST" }
+    ),
+
   /** Re-run one answer against a fresh snapshot. User-initiated only. */
   regenerate: (conversationId: string, messageId: string) =>
     request<Message>(

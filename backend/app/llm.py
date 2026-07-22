@@ -152,6 +152,8 @@ async def classify_dependency(
         return True
 
 
+FAKE_FAIL_MARKER = "[[fail]]"
+
 FAKE_FILLER = (
     "This is a deterministic stand-in response used to exercise the "
     "orchestration layer without spending tokens on a real provider. "
@@ -169,6 +171,13 @@ async def _stream_fake(
     the order they were submitted.
     """
     prompt = turns[-1].content if turns else ""
+
+    # Fault injection for the resilience tests. Provider failures are otherwise
+    # only reproducible by actually breaking the provider, and per-job failure
+    # isolation is precisely the property that needs a deterministic test.
+    if FAKE_FAIL_MARKER in prompt:
+        raise RuntimeError("injected provider failure")
+
     words = FAKE_FILLER.split()
     count = max(12, min(len(prompt.split()) * 6, 160))
     delay = get_settings().fake_llm_chunk_delay_ms / 1000

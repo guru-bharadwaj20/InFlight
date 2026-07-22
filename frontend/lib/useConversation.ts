@@ -188,6 +188,17 @@ export function useConversation(conversationId: string) {
     [conversationId, patch]
   );
 
+  const cancel = useCallback(
+    async (messageId: string) => {
+      try {
+        await api.cancel(conversationId, messageId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [conversationId]
+  );
+
   // Derived, not maintained in state: rows arrive from three places (initial
   // fetch, POST response, frames) and concurrent sends resolve in whatever order
   // the network returns them, so ordering at the edge is the only place it
@@ -210,6 +221,7 @@ export function useConversation(conversationId: string) {
     inFlight,
     send,
     regenerate,
+    cancel,
     refresh,
   };
 }

@@ -133,6 +133,25 @@ async def clear_job(job_id: str, conversation_id: str | None = None) -> None:
 # --- Active-job registry (per conversation) -------------------------------
 
 
+# Checking the count and then adding cannot be done as two round trips: N
+# simultaneous sends all read the same count before any of them registers, and
+# every one of them is admitted. Redis runs a script atomically, so the test and
+# the insert cannot be interleaved.
+_RESERVE_SCRIPT = """
+if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+redis.call('SADD', KEYS[1], ARGV[1])
+return 1
+"""
+
+
+async def reserve_active_job(conversation_id: str, job_id: str, limit: int) -> bool:
+    """Claim a concurrency slot, or return False if the conversation is full."""
+    admitted = await get_redis().eval(
+        _RESERVE_SCRIPT, 1, conversation_active_key(conversation_id), job_id, limit
+    )
+    return bool(admitted)
+
+
 async def register_active_job(conversation_id: str, job_id: str) -> None:
     await get_redis().sadd(conversation_active_key(conversation_id), job_id)
 

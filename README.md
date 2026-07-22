@@ -453,6 +453,41 @@ succeeded.
 
 ---
 
+## What Stage 10 gives you
+
+Survives being used badly, verified against all four failure modes at once:
+
+```
+1. cancel mid-stream      A cancelled, 81 chars of partial output kept,
+                          B unaffected, A absent from context (never committed)
+2. failure isolation      one job errors, sibling completes
+3. reconnect mid-stream   resume + chunks rebuild to 513 chars vs 513 stored
+                          — no gap, no duplication
+4. concurrency cap        12 fired -> 8 accepted, 4 rejected with 429
+```
+
+**Cancelling keeps what was already produced.** It is what the user watched
+appear, and discarding it would make the bubble jump. The row settles as
+`cancelled` with no `completed_at`, so it never becomes context for anything —
+a half-answer is not a fact about the conversation. Anything waiting on it
+unblocks, because `cancelled` is terminal.
+
+### The bug the cap test found
+
+The limit was a count read from Redis and then compared — check-then-act, with a
+round trip in the middle. Twelve simultaneous sends all read the same count
+before any of them registered, and all twelve were admitted. A concurrency limit
+implemented non-atomically is not a limit.
+
+Reservation is now a Lua script, which Redis runs atomically, so the test and the
+insert cannot interleave. The slot is claimed *before* any row is written, and
+released if the write then fails.
+
+Cancel also settles rows orphaned by a restart, which would otherwise sit
+`streaming` forever with no task behind them.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -466,7 +501,7 @@ succeeded.
 | 7 ✅ | Dependency classifier (cheap model call, ambiguous cases only) |
 | 8 ✅ | Manual "chain" override |
 | 9 ✅ | Optimistic fallback + regenerate nudge |
-| 10 | Resilience: cancel, reconnect, per-job failure isolation |
+| 10 ✅ | Resilience: cancel, reconnect, per-job failure isolation |
 | 11 | Evaluation harness |
 | 12 | Documentation, demo, writeup |
 

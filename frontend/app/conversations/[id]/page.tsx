@@ -52,16 +52,18 @@ function Bubble({
   message,
   onChain,
   onRegenerate,
+  onCancel,
   chained,
 }: {
   message: Message;
   onChain: (message: Message) => void;
   onRegenerate: (id: string) => void;
+  onCancel: (id: string) => void;
   chained: boolean;
 }) {
   const isUser = message.role === "user";
   const unsettled = message.status === "pending" || message.status === "streaming";
-  const failed = message.status === "error" || message.status === "cancelled";
+  const failed = message.status === "error";
 
   return (
     <motion.li
@@ -97,6 +99,15 @@ function Bubble({
         >
           ↩ chain
         </button>
+        {!isUser && unsettled && (
+          <button
+            onClick={() => onCancel(message.id)}
+            title="Stop this answer, keeping what it has produced so far"
+            className="absolute -top-2 right-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 opacity-0 transition-opacity hover:text-failed focus:opacity-100 group-hover:opacity-100"
+          >
+            ✕ stop
+          </button>
+        )}
 
         {failed ? (
           <p className="text-sm text-failed">
@@ -297,7 +308,7 @@ function SnapshotInspector({ conversationId }: { conversationId: string }) {
 }
 
 export default function ConversationPage({ params }: { params: { id: string } }) {
-  const { messages, title, connected, loading, error, inFlight, send, regenerate } =
+  const { messages, title, connected, loading, error, inFlight, send, regenerate, cancel } =
     useConversation(params.id);
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -385,6 +396,7 @@ export default function ConversationPage({ params }: { params: { id: string } })
                   message={message}
                   onChain={setReplyTo}
                   onRegenerate={regenerate}
+                  onCancel={cancel}
                   chained={replyTo?.id === message.id}
                 />
               ))}
