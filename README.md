@@ -421,6 +421,38 @@ was doing real work, not agreeing with detection by luck.
 
 ---
 
+## What Stage 9 gives you
+
+The last layer, for when Stages 6–8 all miss. After every completion the
+conversation is re-scanned for pairs where the later prompt could not see the
+earlier answer, was not made to wait, and — judged after the fact — contains a
+reference that the unseen answer would have resolved. Those get a dismissible
+nudge and a one-click regenerate.
+
+This is the **abort/retry half of optimistic concurrency control**, and it is the
+honest admission that the layers above it are not going to be right every time.
+The Stage 7 miss ("refactor this function...") is precisely this shape.
+
+Two properties make it safe to be crude:
+
+- **It only ever suggests.** Nothing re-runs itself. A check this rough should
+  not be spending tokens unasked, and the answer already on screen stands until
+  the user decides otherwise.
+- **It is tuned to over-offer.** Two shared topic words is a low bar, because a
+  false positive costs a dismissible suggestion while a false negative costs a
+  silently wrong answer.
+
+Regenerating re-stamps the cutoff to now and re-runs the *same prompt* — that
+single change is the entire fix, since everything committed since is now inside
+the snapshot. Verified end to end: a concurrent prompt was flagged naming the
+answer it missed, and regenerating took its context from 12 to 94 prompt tokens.
+
+The review runs after the answer is committed and sent, and its failures are
+swallowed — a fault in an advisory check must never fail the job that just
+succeeded.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -433,7 +465,7 @@ was doing real work, not agreeing with detection by luck.
 | 6 ✅ | Dependency heuristic |
 | 7 ✅ | Dependency classifier (cheap model call, ambiguous cases only) |
 | 8 ✅ | Manual "chain" override |
-| 9 | Optimistic fallback + regenerate nudge |
+| 9 ✅ | Optimistic fallback + regenerate nudge |
 | 10 | Resilience: cancel, reconnect, per-job failure isolation |
 | 11 | Evaluation harness |
 | 12 | Documentation, demo, writeup |

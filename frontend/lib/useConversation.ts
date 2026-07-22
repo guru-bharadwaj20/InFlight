@@ -66,6 +66,13 @@ export function useConversation(conversationId: string) {
           patch(frame.job_id, { content: frame.text, status: frame.status });
           break;
 
+        case "stale_context":
+          patch(frame.job_id, {
+            stale_context_reason: frame.stale_context_reason,
+            stale_context_source_id: frame.stale_context_source_id,
+          });
+          break;
+
         case "dependency":
           patch(frame.job_id, {
             detected_dependency: frame.detected_dependency,
@@ -165,6 +172,22 @@ export function useConversation(conversationId: string) {
     [conversationId]
   );
 
+  const regenerate = useCallback(
+    async (messageId: string) => {
+      try {
+        // The row is reset server-side; clear the local replay cursor too, or
+        // the first chunks of the new answer would be dropped as already-seen.
+        lastSeq.current.delete(messageId);
+        const fresh = await api.regenerate(conversationId, messageId);
+        patch(messageId, fresh);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [conversationId, patch]
+  );
+
   // Derived, not maintained in state: rows arrive from three places (initial
   // fetch, POST response, frames) and concurrent sends resolve in whatever order
   // the network returns them, so ordering at the edge is the only place it
@@ -178,5 +201,15 @@ export function useConversation(conversationId: string) {
     (message) => message.status === "pending" || message.status === "streaming"
   ).length;
 
-  return { messages, title, connected, loading, error, inFlight, send, refresh };
+  return {
+    messages,
+    title,
+    connected,
+    loading,
+    error,
+    inFlight,
+    send,
+    regenerate,
+    refresh,
+  };
 }

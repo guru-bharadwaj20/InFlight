@@ -98,6 +98,9 @@ class Message(Base):
         String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
 
+    stale_context_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stale_context_source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     detected_dependency: Mapped[str | None] = mapped_column(String, nullable=True)
     dependency_source: Mapped[str | None] = mapped_column(String, nullable=True)
     dependency_reason: Mapped[str | None] = mapped_column(String, nullable=True)

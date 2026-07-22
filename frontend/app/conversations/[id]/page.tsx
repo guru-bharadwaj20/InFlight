@@ -51,10 +51,12 @@ function StatusChip({ status }: { status: MessageStatus }) {
 function Bubble({
   message,
   onChain,
+  onRegenerate,
   chained,
 }: {
   message: Message;
   onChain: (message: Message) => void;
+  onRegenerate: (id: string) => void;
   chained: boolean;
 }) {
   const isUser = message.role === "user";
@@ -149,6 +151,22 @@ function Bubble({
                 done {formatTime(message.completed_at)}
               </span>
             )}
+          </div>
+        )}
+
+        {/* Non-blocking by design: the answer stands, this only offers. */}
+        {message.stale_context_reason && message.status === "complete" && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-pending/40 bg-pending/5 px-2 py-1.5">
+            <p className="min-w-0 flex-1 text-[11px] text-zinc-400">
+              This answer may not have had your earlier prompt&apos;s context —{" "}
+              <span className="text-zinc-500">{message.stale_context_reason}</span>
+            </p>
+            <button
+              onClick={() => onRegenerate(message.id)}
+              className="shrink-0 rounded border border-pending/60 px-2 py-0.5 font-mono text-[10px] text-pending hover:bg-pending/10"
+            >
+              regenerate with it
+            </button>
           </div>
         )}
       </div>
@@ -279,7 +297,7 @@ function SnapshotInspector({ conversationId }: { conversationId: string }) {
 }
 
 export default function ConversationPage({ params }: { params: { id: string } }) {
-  const { messages, title, connected, loading, error, inFlight, send } =
+  const { messages, title, connected, loading, error, inFlight, send, regenerate } =
     useConversation(params.id);
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -366,6 +384,7 @@ export default function ConversationPage({ params }: { params: { id: string } })
                   key={message.id}
                   message={message}
                   onChain={setReplyTo}
+                  onRegenerate={regenerate}
                   chained={replyTo?.id === message.id}
                 />
               ))}

@@ -123,8 +123,11 @@ async def classify_dependency(
     settings = get_settings()
 
     if settings.use_fake_llm:
-        # Keeps the fake path deterministic without pretending to reason.
-        return "?" not in prompt
+        # The offline path does not pretend to judge. It always allows
+        # concurrency, which keeps it deterministic and exercises the optimistic
+        # branch — the one whose failure mode Stage 9's retrospective check and
+        # regenerate nudge exist to catch.
+        return False
 
     earlier = "\n".join(f"- {p[:200]}" for p in in_flight) or "- (none)"
     question = (

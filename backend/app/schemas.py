@@ -17,6 +17,8 @@ class MessageOut(BaseModel):
     dependency_mode: str
     parent_message_id: str | None
     prompt_message_id: str | None
+    stale_context_reason: str | None
+    stale_context_source_id: str | None
     detected_dependency: str | None
     dependency_source: str | None
     dependency_reason: str | None

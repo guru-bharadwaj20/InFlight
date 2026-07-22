@@ -165,4 +165,48 @@ def evaluate(prompt: str) -> Detection:
             Verdict.UNSURE, "demonstrative modifying a noun", demo.group(0)
         )
 
-    return Detection(Verdict.INDEPENDENT, "no referring expressions")
+    return Detection(Verdict.INDEPENDENT, NO_REFERENCES)
+
+
+NO_REFERENCES = "no referring expressions"
+
+# Two shared topic words is a deliberately low bar. The nudge it produces is
+# dismissible and non-blocking, so a false positive costs a suggestion while a
+# false negative costs a silently wrong answer.
+OVERLAP_THRESHOLD = 2
+MIN_TOPIC_WORD = 4
+
+
+def _topic_words(text: str) -> set[str]:
+    return {
+        t for t in _tokens(text)
+        if len(t) >= MIN_TOPIC_WORD and t not in FUNCTION_WORDS
+    }
+
+
+def retrospective_conflict(prompt: str, answer: str) -> str | None:
+    """Judged after the fact: did this prompt probably need that answer?
+
+    The last line of defence, for when the heuristic and the classifier both let
+    a prompt run concurrently and the answer it needed then landed anyway. Same
+    signals as `evaluate`, run backwards: the prompt had a referring expression
+    that nothing local resolved, and the answer it could not see turns out to
+    talk about the same things.
+
+    Returns a human-readable reason, or None if there is nothing to suggest.
+    This only ever produces a dismissible nudge — it never re-runs anything on
+    its own, because a check this crude should not be spending tokens unasked.
+    """
+    detection = evaluate(prompt)
+    if detection.verdict == Verdict.INDEPENDENT and detection.reason == NO_REFERENCES:
+        return None
+
+    shared = _topic_words(prompt) & _topic_words(answer)
+    if len(shared) < OVERLAP_THRESHOLD:
+        return None
+
+    terms = ", ".join(sorted(shared)[:3])
+    return (
+        f"this prompt refers to something ({detection.matched or 'a reference'}) "
+        f"and the answer it could not see discusses {terms}"
+    )

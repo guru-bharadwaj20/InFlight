@@ -101,6 +101,11 @@ async def append_chunk(job_id: str, text: str, seq: int) -> None:
         await pipe.execute()
 
 
+async def clear_buffer(job_id: str) -> None:
+    """Drop replayed text before a re-run, so the new answer starts empty."""
+    await get_redis().delete(job_buffer_key(job_id))
+
+
 async def job_snapshot(job_id: str) -> tuple[dict[str, str], str]:
     """State and replay buffer for one job, read together.
 

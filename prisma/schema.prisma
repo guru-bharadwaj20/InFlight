@@ -90,6 +90,13 @@ model Message {
   dependencySource   String? @map("dependency_source")
   dependencyReason   String? @map("dependency_reason")
 
+  /// Set when the retrospective check (Stage 9) suspects this answer was
+  /// generated without context it turned out to need, naming the message it
+  /// could not see. Advisory only — it drives a dismissible nudge, never an
+  /// automatic re-run.
+  staleContextReason   String? @map("stale_context_reason")
+  staleContextSourceId String? @map("stale_context_source_id")
+
   /// Usage, captured from the API response on completion (Stage 5).
   promptTokens     Int?    @map("prompt_tokens")
   completionTokens Int?    @map("completion_tokens")

@@ -16,7 +16,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import redis_client
+from . import dependency, redis_client
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
@@ -271,6 +271,81 @@ async def _resolve_dependency(
         await session.commit()
 
 
+async def review_stale_context(session: AsyncSession, conversation_id: str) -> None:
+    """Look for answers that ran without context they turned out to need.
+
+    Runs after every completion, over the whole conversation, because the pair
+    only becomes checkable once *both* halves are done — and which of the two
+    finishes last is exactly what is unpredictable here. Scanning both
+    directions each time is cheaper than tracking who is waiting on whom.
+
+    A pair is suspicious when the later prompt could not see the earlier answer
+    (its cutoff predates that answer's commit), it was not made to wait, and the
+    retrospective check finds a reference in it that the unseen answer would
+    have resolved.
+    """
+    result = await session.execute(
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == Role.ASSISTANT,
+            Message.status == Status.COMPLETE,
+        )
+        .order_by(Message.completed_at.asc())
+        .execution_options(populate_existing=True)
+    )
+    answers = list(result.scalars())
+    if len(answers) < 2:
+        return
+
+    prompts: dict[str, str] = {}
+    ids = [a.prompt_message_id for a in answers if a.prompt_message_id]
+    if ids:
+        rows = await session.execute(
+            select(Message.id, Message.content).where(Message.id.in_(ids))
+        )
+        prompts = {r[0]: r[1] or "" for r in rows.all()}
+
+    flagged = []
+    for later in answers:
+        if later.stale_context_reason or later.detected_dependency == Verdict.DEPENDENT:
+            continue
+        prompt = prompts.get(later.prompt_message_id or "")
+        if not prompt:
+            continue
+
+        for earlier in answers:
+            if earlier.id == later.id or not earlier.completed_at:
+                continue
+            # Did `later` start before `earlier` committed, and finish after?
+            if earlier.completed_at <= later.context_cutoff:
+                continue
+            if earlier.submitted_at > later.submitted_at:
+                continue
+
+            reason = dependency.retrospective_conflict(prompt, earlier.content or "")
+            if reason:
+                later.stale_context_reason = reason
+                later.stale_context_source_id = earlier.id
+                flagged.append(later)
+                break
+
+    if not flagged:
+        return
+
+    await session.commit()
+    for message in flagged:
+        await redis_client.publish(
+            conversation_id,
+            message.id,
+            {
+                "type": "stale_context",
+                "stale_context_reason": message.stale_context_reason,
+                "stale_context_source_id": message.stale_context_source_id,
+            },
+        )
+
+
 async def _finish(
     session: AsyncSession,
     job: Message,
@@ -360,6 +435,13 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 usage=usage,
                 model=model,
             )
+            # Advisory, and deliberately after the answer has been committed and
+            # sent: a failure to spot a stale sibling must not fail the job that
+            # just succeeded.
+            try:
+                await review_stale_context(session, conversation_id)
+            except Exception:
+                logger.exception("stale-context review failed for %s", conversation_id)
 
         except asyncio.CancelledError:
             # Keep whatever was generated before the cancel — it is what the user

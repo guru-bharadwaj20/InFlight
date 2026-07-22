@@ -30,6 +30,9 @@ export interface Message {
   parent_message_id: string | null;
   /** On an assistant row, the user message it is answering. */
   prompt_message_id: string | null;
+  /** Set when this answer is suspected of having missed context it needed. */
+  stale_context_reason: string | null;
+  stale_context_source_id: string | null;
   /** What dependency detection concluded, and how — not what the user asked for. */
   detected_dependency: "dependent" | "independent" | "unsure" | null;
   dependency_source: "heuristic" | "classifier" | "chained" | null;
@@ -98,6 +101,13 @@ export type Frame =
       dependency_source: "heuristic" | "classifier" | "chained";
       dependency_reason: string;
     }
+  /** The retrospective check suspects this answer missed context it needed. */
+  | {
+      job_id: string;
+      type: "stale_context";
+      stale_context_reason: string;
+      stale_context_source_id: string;
+    }
   | {
       job_id: string;
       type: "done" | "error";
@@ -156,6 +166,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content, parent_message_id: parentMessageId ?? null }),
     }),
+
+  /** Re-run one answer against a fresh snapshot. User-initiated only. */
+  regenerate: (conversationId: string, messageId: string) =>
+    request<Message>(
+      `/conversations/${conversationId}/messages/${messageId}/regenerate`,
+      { method: "POST" }
+    ),
 
   /** What a job stamped at `at` would be allowed to read as context. */
   getContextSnapshot: (conversationId: string, at?: string) =>

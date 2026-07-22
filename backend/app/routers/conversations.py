@@ -191,6 +191,62 @@ async def send_prompt(
     )
 
 
+@router.post(
+    "/{conversation_id}/messages/{message_id}/regenerate",
+    response_model=MessageOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def regenerate(
+    conversation_id: str,
+    message_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Re-run one answer against a fresh snapshot.
+
+    The abort/retry half of the optimistic-concurrency pattern: the job was
+    allowed to proceed on the assumption it was independent, and this is what
+    that assumption costs when it turns out to be wrong. Re-stamping the cutoff
+    to now is the whole fix — the prompt is unchanged, but everything that has
+    committed since is now inside its snapshot.
+
+    User-initiated only. The retrospective check suggests; it never re-runs.
+    """
+    await _load_conversation(session, conversation_id)
+
+    message = await session.get(Message, message_id)
+    if message is None or message.conversation_id != conversation_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "message not found")
+    if message.role != Role.ASSISTANT:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only answers can be regenerated")
+    if message.status not in Status.TERMINAL:
+        raise HTTPException(status.HTTP_409_CONFLICT, "this answer is still generating")
+
+    message.status = Status.PENDING
+    message.content = None
+    message.error = None
+    message.completed_at = None
+    message.prompt_tokens = None
+    message.completion_tokens = None
+    message.context_cutoff = utcnow()
+    # The nudge has been acted on, so it should not survive the re-run.
+    message.stale_context_reason = None
+    message.stale_context_source_id = None
+    # Detection ran against a world that no longer exists; on a fresh snapshot
+    # there is nothing in flight to depend on.
+    message.detected_dependency = dependency.Verdict.INDEPENDENT
+    message.dependency_source = dependency.Source.HEURISTIC
+    message.dependency_reason = "regenerated against a fresh snapshot"
+    await session.commit()
+
+    await redis_client.set_job_state(
+        message.id, status=Status.PENDING, conversation_id=conversation_id, seq=0
+    )
+    await redis_client.clear_buffer(message.id)
+    await redis_client.register_active_job(conversation_id, message.id)
+    jobs.spawn(message.id, conversation_id)
+    return message
+
+
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])
 async def get_context_snapshot(
     conversation_id: str,
