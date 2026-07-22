@@ -1,4 +1,4 @@
-name: concurrent-chat
+name: inflight
 
 services:
   postgres:

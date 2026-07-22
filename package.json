@@ -1,5 +1,5 @@
 {
-  "name": "concurrent-chat",
+  "name": "inflight",
   "version": "0.1.0",
   "private": true,
   "description": "Root workspace: hosts the Prisma CLI, which owns the database schema and migrations.",

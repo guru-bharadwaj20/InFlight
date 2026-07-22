@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Concurrent LLM Chat",
+    title="InFlight",
     version="0.1.0",
     description=(
         "Non-blocking concurrent chat: several prompts generate at once against "
@@ -46,4 +46,4 @@ app.include_router(ws.router)
 
 @app.get("/", tags=["health"])
 async def root() -> dict[str, str]:
-    return {"service": "concurrent-chat-backend", "docs": "/docs", "health": "/health"}
+    return {"service": "inflight-backend", "docs": "/docs", "health": "/health"}

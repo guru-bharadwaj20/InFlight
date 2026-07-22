@@ -1,10 +1,13 @@
-# Non-Blocking Concurrent LLM Chat
+# InFlight
 
-A chat interface where the input box is never locked. You can fire a follow-up
-prompt while a previous one is still generating; both run concurrently against a
-shared, evolving conversation history, and each response is reconciled back into
-that history using a snapshot-based (MVCC-like) concurrency model rather than a
-hard queue.
+**A chat where the input box is never locked.** Fire a follow-up while a previous
+answer is still generating; both run concurrently against one shared, evolving
+history, and each is reconciled back into it using a snapshot-based (MVCC-like)
+concurrency model rather than a hard queue.
+
+The name is the state the interface is built around: at any moment several
+answers are *in flight*, and the design's whole job is making that legible
+instead of hiding it behind a spinner.
 
 This is a systems/concurrency project wearing an AI costume. The interesting part
 is not the model call — it is deciding what "the conversation so far" means when
@@ -285,6 +288,23 @@ URL used by the Prisma CLI; the backend container gets its own URL pointing at
 the `postgres` service name, set in `docker-compose.yml`.
 
 ---
+
+## The interface
+
+Warm paper surface, serif greeting, a card composer, and a left rail of recents —
+familiar on purpose, so the one genuinely unusual thing stands out rather than
+competing with novel chrome.
+
+That one thing is the **status strip along the bottom of the composer**. Where
+other assistants put a plan or a usage meter, InFlight puts what is happening
+right now: how many answers are in flight, how many have landed, tokens, and
+estimated cost — all updating live off the same frames that fill the bubbles.
+
+The rest follows from the same idea. Each answer carries its own state chip, so
+three streaming at once are legible at a glance. A held prompt says *waiting for
+the previous answer* rather than stalling silently. `↩ chain` and `stop` appear on
+hover over any bubble, including one still streaming. Blue means exactly one
+thing throughout — in flight — and is used nowhere else.
 
 ## Demo
 

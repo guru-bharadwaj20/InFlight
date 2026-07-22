@@ -3,9 +3,39 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  @apply bg-paper text-ink antialiased;
+}
+
+/* Soft wash behind the landing hero. Fixed and non-interactive so it sits under
+   the content without affecting layout or catching pointer events. */
+.hero-wash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 32rem at 50% -8%, rgba(47, 109, 246, 0.1), transparent 70%),
+    radial-gradient(40rem 24rem at 12% 8%, rgba(160, 132, 232, 0.08), transparent 70%);
+}
+
+/* Scrollbars, toned down so a busy conversation does not look striped. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d9d5ce transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #d9d5ce;
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
