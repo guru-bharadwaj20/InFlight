@@ -90,6 +90,14 @@ export type Frame =
   | { job_id: string; type: "chunk"; seq: number; text: string }
   /** Sent on (re)connect for a job already streaming: the text so far. */
   | { job_id: string; type: "resume"; status: MessageStatus; text: string; seq: number }
+  /** The classifier settled an `unsure` verdict; the job may now be waiting. */
+  | {
+      job_id: string;
+      type: "dependency";
+      detected_dependency: "dependent" | "independent" | "unsure";
+      dependency_source: "heuristic" | "classifier" | "chained";
+      dependency_reason: string;
+    }
   | {
       job_id: string;
       type: "done" | "error";

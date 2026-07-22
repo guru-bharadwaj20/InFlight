@@ -17,8 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import redis_client
+from .config import get_settings
 from .db import session_factory
-from .llm import LLMNotConfigured, Turn, Usage, stream_completion
+from .dependency import Source, Verdict
+from .llm import LLMNotConfigured, Turn, Usage, classify_dependency, stream_completion
 from .models import Message, Role, Status, utcnow
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,11 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
             Message.completed_at < job.context_cutoff,
         )
         .order_by(Message.completed_at.asc())
+        # A job that waited for a predecessor may already hold that row from
+        # before it finished, when its content was still null. Without this the
+        # WHERE clause would correctly select it and the identity map would
+        # then hand back the stale, empty version.
+        .execution_options(populate_existing=True)
     )
     answers = list(answered.scalars())
 
@@ -84,7 +91,11 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
 
     prompts: dict[str, Message] = {}
     if prompt_ids:
-        found = await session.execute(select(Message).where(Message.id.in_(prompt_ids)))
+        found = await session.execute(
+            select(Message)
+            .where(Message.id.in_(prompt_ids))
+            .execution_options(populate_existing=True)
+        )
         prompts = {m.id: m for m in found.scalars()}
 
     turns: list[Turn] = []
@@ -99,6 +110,109 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
         turns.append(Turn(role=Role.USER, content=own_prompt.content or ""))
 
     return turns
+
+
+async def _earlier_in_flight(session: AsyncSession, job: Message) -> list[str]:
+    """Prompt ids of jobs submitted before this one that have not settled yet.
+
+    Strictly earlier, which is what makes waiting safe: a job only ever waits on
+    jobs ahead of it in submission order, so no cycle can form and two mutually
+    dependent prompts cannot deadlock each other.
+
+    Selects plain columns rather than ORM entities deliberately. This runs in a
+    poll loop against rows *other* tasks are mutating, and loading entities would
+    put them in this session's identity map, where their stale attribute values
+    would then be handed back on every later read.
+    """
+    result = await session.execute(
+        select(Message.prompt_message_id)
+        .where(
+            Message.conversation_id == job.conversation_id,
+            Message.role == Role.ASSISTANT,
+            Message.id != job.id,
+            Message.submitted_at < job.submitted_at,
+            Message.status.in_(tuple(Status.ACTIVE)),
+        )
+        .order_by(Message.submitted_at.asc())
+    )
+    return [row[0] for row in result.all() if row[0]]
+
+
+async def _text_of(session: AsyncSession, message_id: str | None) -> str:
+    if not message_id:
+        return ""
+    result = await session.execute(
+        select(Message.content).where(Message.id == message_id)
+    )
+    return result.scalar_one_or_none() or ""
+
+
+async def _resolve_dependency(
+    session: AsyncSession, job: Message, conversation_id: str
+) -> None:
+    """Settle whether this job must wait, then wait for as long as it says.
+
+    Runs inside the job rather than in the request handler on purpose. Sending
+    must stay instant even for a prompt that turns out to be dependent — the
+    waiting belongs to the job, not to the user's keystroke.
+    """
+    settings = get_settings()
+    verdict = job.detected_dependency
+
+    if verdict == Verdict.UNSURE:
+        pending = await _earlier_in_flight(session, job)
+        if not pending:
+            # Nothing is in flight, so there is nothing this prompt could be
+            # waiting on. No need to spend a classifier call to learn that.
+            job.detected_dependency = Verdict.INDEPENDENT
+            job.dependency_reason = "nothing in flight to depend on"
+        else:
+            texts = [await _text_of(session, pid) for pid in pending]
+            depends = await classify_dependency(
+                await _text_of(session, job.prompt_message_id), texts
+            )
+            job.detected_dependency = (
+                Verdict.DEPENDENT if depends else Verdict.INDEPENDENT
+            )
+            job.dependency_source = Source.CLASSIFIER
+            job.dependency_reason = (
+                "classifier: needs the earlier answer"
+                if depends
+                else "classifier: self-contained"
+            )
+        verdict = job.detected_dependency
+        await session.commit()
+        await redis_client.publish(
+            conversation_id,
+            job.id,
+            {
+                "type": "dependency",
+                "detected_dependency": job.detected_dependency,
+                "dependency_source": job.dependency_source,
+                "dependency_reason": job.dependency_reason,
+            },
+        )
+
+    if verdict != Verdict.DEPENDENT:
+        return
+
+    deadline = asyncio.get_running_loop().time() + settings.max_dependency_wait_seconds
+    interval = settings.dependency_poll_interval_ms / 1000
+    waited = False
+
+    while await _earlier_in_flight(session, job):
+        if asyncio.get_running_loop().time() > deadline:
+            logger.warning("job %s gave up waiting for predecessors", job.id)
+            break
+        waited = True
+        await asyncio.sleep(interval)
+
+    if waited:
+        # The whole point of waiting was to see what landed while we waited, so
+        # the snapshot has to be retaken. Keeping the original cutoff would mean
+        # blocking for an answer and then ignoring it.
+        job.context_cutoff = utcnow()
+        await session.commit()
 
 
 async def _finish(
@@ -161,6 +275,9 @@ async def run_job(job_id: str, conversation_id: str) -> None:
 
         model = job.model
         try:
+            # Before anything else: does this job have to wait for someone?
+            await _resolve_dependency(session, job, conversation_id)
+
             turns = await build_context(session, job)
 
             job.status = Status.STREAMING

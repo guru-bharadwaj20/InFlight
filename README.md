@@ -341,6 +341,57 @@ row, so the UI can explain a wait rather than just imposing one.
 
 ---
 
+## What Stage 7 gives you
+
+The `unsure` verdicts now get one cheap, constrained model call, and a job that
+turns out to be dependent actually waits.
+
+```
+prompt ─> heuristic ─┬─ dependent ───────────────┐
+                     ├─ independent ─> fire now  │
+                     └─ unsure ─> classifier ─┬──┴─> wait for earlier jobs
+                                              └─────> fire now
+```
+
+**The wait lives in the job, not in the request.** `POST /messages` still returns
+in ~400 ms even for a dependent prompt; classification and waiting happen inside
+the background job. Sending must stay instant even when answering cannot — that
+is the entire premise of the project, and putting a classifier call in the submit
+path would have quietly undone it.
+
+Three things make the waiting safe:
+
+- **Only ever waits on strictly earlier submissions**, so no cycle can form and
+  two mutually dependent prompts cannot deadlock.
+- **Re-stamps the cutoff after waiting.** Blocking for an answer and then reading
+  a snapshot taken before it would be the worst of both.
+- **Bounded.** Past `MAX_DEPENDENCY_WAIT_SECONDS` it proceeds anyway — a slightly
+  stale snapshot beats never answering.
+- **Fails toward waiting.** A classifier error returns `dependent`, because
+  guessing independence ships a wrong answer while guessing dependence costs a
+  wait.
+
+Measured on the 11 deferred cases (`python -m scripts.eval_classifier`):
+
+```
+correct  10/11  (90.9%)
+  false independent (costs correctness) 1
+  false dependent   (costs latency)     0
+```
+
+Pipeline end to end: **37/38 (97.4%)** — heuristic 27/27 on what it decides,
+classifier 10/11 on the rest. The single miss is "Refactor this function to be
+tail recursive", called independent when it was dependent. That is the expensive
+direction, and it is exactly the case Stage 9's retrospective check exists to
+catch. It will not be the only one — see the limitations section.
+
+Verified live: a dependent follow-up ("now do the same for search algorithms")
+held until its predecessor landed and then answered about *search*, proving it
+read the answer it waited for; two independent prompts still streamed
+concurrently.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -351,7 +402,7 @@ row, so the UI can explain a wait rather than just imposing one.
 | 4 ✅ | History reconciliation UI |
 | 5 ✅ | Token/cost dashboard |
 | 6 ✅ | Dependency heuristic |
-| 7 | Dependency classifier (cheap model call, ambiguous cases only) |
+| 7 ✅ | Dependency classifier (cheap model call, ambiguous cases only) |
 | 8 | Manual "chain" override |
 | 9 | Optimistic fallback + regenerate nudge |
 | 10 | Resilience: cancel, reconnect, per-job failure isolation |

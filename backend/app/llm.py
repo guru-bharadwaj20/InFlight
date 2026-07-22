@@ -7,6 +7,8 @@ provider-agnostic — swapping models (or vendors) touches this file only.
 """
 
 import asyncio
+import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -16,6 +18,8 @@ from google.genai import types
 
 from .config import get_settings
 from .models import Role
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_INSTRUCTION = (
     "You are a helpful assistant in a chat application. Answer the user's most "
@@ -85,6 +89,64 @@ def to_contents(turns: Sequence[Turn]) -> list[types.Content]:
         types.Content(role=role, parts=[types.Part.from_text(text="\n\n".join(texts))])
         for role, texts in merged
     ]
+
+
+DEPENDENCY_SYSTEM = (
+    "You decide whether a new chat message needs the answer to an earlier, still-"
+    "unfinished message in order to be answered correctly.\n\n"
+    "Answer true only if the new message cannot be properly answered without "
+    "knowing what the earlier answer said — for example it refers back to it, "
+    "builds on it, or asks to modify it. Answer false if the new message is "
+    "self-contained, even when it is on a related topic. A pronoun that resolves "
+    "inside the new message itself does not make it dependent."
+)
+
+DEPENDENCY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"depends_on_prior": {"type": "BOOLEAN"}},
+    "required": ["depends_on_prior"],
+}
+
+
+async def classify_dependency(
+    prompt: str, in_flight: Sequence[str], model: str | None = None
+) -> bool:
+    """Does `prompt` need one of the still-generating `in_flight` prompts answered first?
+
+    Reached only for prompts the heuristic could not settle, so the latency is
+    paid on a minority of sends. Constrained decoding rather than prose parsing —
+    the model is given a response schema and can only return the one boolean.
+
+    A failure here returns True: if we cannot tell, waiting costs latency while
+    guessing independence costs a wrong answer.
+    """
+    settings = get_settings()
+
+    if settings.use_fake_llm:
+        # Keeps the fake path deterministic without pretending to reason.
+        return "?" not in prompt
+
+    earlier = "\n".join(f"- {p[:200]}" for p in in_flight) or "- (none)"
+    question = (
+        f"Earlier messages still being answered:\n{earlier}\n\n"
+        f"New message:\n- {prompt[:500]}"
+    )
+
+    try:
+        response = await get_client().aio.models.generate_content(
+            model=model or settings.classifier_model,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=question)])],
+            config=types.GenerateContentConfig(
+                system_instruction=DEPENDENCY_SYSTEM,
+                response_mime_type="application/json",
+                response_schema=DEPENDENCY_SCHEMA,
+                temperature=0,
+            ),
+        )
+        return bool(json.loads(response.text)["depends_on_prior"])
+    except Exception:
+        logger.exception("dependency classifier failed; assuming dependent")
+        return True
 
 
 FAKE_FILLER = (

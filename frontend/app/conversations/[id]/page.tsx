@@ -78,8 +78,13 @@ function Bubble({ message }: { message: Message }) {
           </p>
         ) : message.status === "pending" ? (
           // Occupies a line from the start, so first token arriving grows the
-          // bubble instead of creating one.
-          <p className="text-sm italic text-zinc-500">waiting to start…</p>
+          // bubble instead of creating one. A held job says *why* it is held —
+          // an unexplained wait in a chat that never blocks reads as a bug.
+          <p className="text-sm italic text-zinc-500">
+            {message.detected_dependency === "dependent"
+              ? "waiting for the previous answer…"
+              : "waiting to start…"}
+          </p>
         ) : (
           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
             {message.content}

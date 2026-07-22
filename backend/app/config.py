@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     use_fake_llm: bool = False
     fake_llm_chunk_delay_ms: int = 45
 
+    # A dependent job waits for everything submitted before it. The cap stops one
+    # wedged predecessor from stranding a job forever — past it, answering with a
+    # slightly stale snapshot beats never answering at all.
+    max_dependency_wait_seconds: int = 120
+    dependency_poll_interval_ms: int = 150
+
     cors_origins: str = "http://localhost:3000"
 
     @property

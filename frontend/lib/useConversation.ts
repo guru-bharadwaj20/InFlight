@@ -66,6 +66,14 @@ export function useConversation(conversationId: string) {
           patch(frame.job_id, { content: frame.text, status: frame.status });
           break;
 
+        case "dependency":
+          patch(frame.job_id, {
+            detected_dependency: frame.detected_dependency,
+            dependency_source: frame.dependency_source,
+            dependency_reason: frame.dependency_reason,
+          });
+          break;
+
         case "done":
         case "error":
           patch(frame.job_id, {
