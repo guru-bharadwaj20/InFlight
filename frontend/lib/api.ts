@@ -56,6 +56,21 @@ export interface Health {
   gemini_key_configured: boolean;
 }
 
+export interface ModelRate {
+  /** USD per 1M tokens. */
+  input: number;
+  output: number;
+}
+
+export interface Pricing {
+  updated: string;
+  source: string;
+  currency: string;
+  unit: string;
+  note: string;
+  models: Record<string, ModelRate>;
+}
+
 /** Both rows a prompt creates. The answer itself arrives over the WebSocket. */
 export interface PromptAccepted {
   user_message: Message;
@@ -100,6 +115,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<Health>("/health"),
+
+  /** Rates only — the client already holds the token counts to apply them to. */
+  pricing: () => request<Pricing>("/pricing"),
 
   listConversations: () => request<Conversation[]>("/conversations"),
 

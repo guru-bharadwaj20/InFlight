@@ -55,6 +55,22 @@ class PromptAccepted(BaseModel):
     assistant_message: MessageOut
 
 
+class ModelRate(BaseModel):
+    """USD per 1M tokens."""
+
+    input: float
+    output: float
+
+
+class PricingOut(BaseModel):
+    updated: str
+    source: str
+    currency: str
+    unit: str
+    note: str
+    models: dict[str, ModelRate]
+
+
 class HealthOut(BaseModel):
     status: str
     postgres: str

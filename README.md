@@ -10,9 +10,13 @@ This is a systems/concurrency project wearing an AI costume. The interesting par
 is not the model call — it is deciding what "the conversation so far" means when
 two answers are in flight at once.
 
-**Status: Stage 4 of 12 complete** — several prompts generate at once against one
-shared history, each reading its own snapshot, and the UI keeps display order
-and completion order visibly separate.
+**Status: Stage 5 of 12 complete** — several prompts generate at once against one
+shared history, each reading its own snapshot; the UI keeps display order and
+completion order visibly separate, and reports what it all cost.
+
+Stages 1–5 are a coherent project on their own: non-blocking concurrent chat
+with snapshot-based context and a transparency dashboard. Stages 6–9 add the
+dependency-awareness layer on top.
 
 ---
 
@@ -254,6 +258,40 @@ on every chunk would make reading anything above impossible.
 
 ---
 
+## What Stage 5 gives you
+
+A live per-conversation token and cost readout: prompt, completion and total
+tokens, an estimated spend, and a per-model breakdown, alongside a count of how
+many answers are still in flight.
+
+**It is a dashboard, not a gatekeeper.** Nothing in it limits or blocks a
+request. The point is honesty about what concurrency costs — firing three
+prompts at once is three prompts' worth of tokens, and that should be visible
+rather than discovered on a bill.
+
+Two decisions keep the numbers trustworthy:
+
+- **Totals are derived, never fetched.** Message rows already carry their own
+  token counts, so the client sums rows it already holds. The panel updates off
+  the same frames that drive the bubbles, which means it cannot drift from
+  what's on screen and needs no polling. The server only supplies the rate
+  table, via `GET /pricing`.
+- **An unknown model produces no estimate, not a zero.** Rates live in
+  [backend/app/pricing.json](backend/app/pricing.json) with the date and source
+  they were taken from — updating them is an edit, not a code change. A model
+  with no entry still contributes tokens, but marks the total partial and shows
+  `—` for cost. An absent number is obviously absent; a wrong one is not.
+
+`summarize` in [frontend/lib/usage.ts](frontend/lib/usage.ts) is a pure function
+with unit tests covering the per-million divisor, in-flight exclusion, unpriced
+models, and a missing rate table.
+
+Note that with `USE_FAKE_LLM=true` the "tokens" are word counts from the local
+generator, so the cost estimate is meaningless — it exercises the plumbing, not
+real spend.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -262,7 +300,7 @@ on every chunk would make reading anything above impossible.
 | 2 ✅ | Baseline single-threaded chat (the control group) |
 | 3 ✅ | Concurrency plumbing — remove the input lock |
 | 4 ✅ | History reconciliation UI |
-| 5 | Token/cost dashboard |
+| 5 ✅ | Token/cost dashboard |
 | 6 | Dependency heuristic |
 | 7 | Dependency classifier (cheap model call, ambiguous cases only) |
 | 8 | Manual "chain" override |

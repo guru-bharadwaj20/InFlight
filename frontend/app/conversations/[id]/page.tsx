@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
-import { api, type Message, type MessageStatus } from "@/lib/api";
+import { api, type Message, type MessageStatus, type Pricing } from "@/lib/api";
 import { useConversation } from "@/lib/useConversation";
+import { formatTokens, formatUsd, summarize } from "@/lib/usage";
 
 function formatTime(value: string | null) {
   if (!value) return "—";
@@ -109,6 +110,88 @@ function Bubble({ message }: { message: Message }) {
         )}
       </div>
     </motion.li>
+  );
+}
+
+/**
+ * Transparency, not a gatekeeper: this reports spend and never limits it.
+ *
+ * Totals are computed from the rows already on screen, so the panel updates as
+ * each job settles without polling anything.
+ */
+function UsagePanel({ messages }: { messages: Message[] }) {
+  const [pricing, setPricing] = useState<Pricing | null>(null);
+
+  useEffect(() => {
+    // Rates change rarely; fetch once and apply client-side.
+    api.pricing().then(setPricing).catch(() => setPricing(null));
+  }, []);
+
+  const usage = summarize(messages, pricing);
+
+  const cells = [
+    { label: "prompt", value: formatTokens(usage.promptTokens) },
+    { label: "completion", value: formatTokens(usage.completionTokens) },
+    { label: "total tokens", value: formatTokens(usage.totalTokens) },
+    {
+      label: "est. cost",
+      value: formatUsd(usage.costUsd),
+      hint: usage.partial ? "excludes models with no published rate" : undefined,
+    },
+  ];
+
+  return (
+    <section className="rounded-lg border border-zinc-800 p-3">
+      <div className="flex items-baseline justify-between gap-4">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+          Session usage
+        </h3>
+        <span className="font-mono text-[10px] text-zinc-600">
+          {usage.answers} answered
+          {usage.inFlight > 0 && (
+            <span className="text-streaming"> · {usage.inFlight} in flight</span>
+          )}
+        </span>
+      </div>
+
+      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+        {cells.map((cell) => (
+          <div key={cell.label}>
+            <dt className="font-mono text-[10px] uppercase text-zinc-600">
+              {cell.label}
+            </dt>
+            <dd
+              className="font-mono text-sm text-zinc-200"
+              title={cell.hint}
+            >
+              {cell.value}
+              {cell.hint && <span className="text-pending"> *</span>}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {usage.byModel.length > 0 && (
+        <ul className="mt-3 space-y-1 border-t border-zinc-800 pt-2 font-mono text-[10px] text-zinc-500">
+          {usage.byModel.map((entry) => (
+            <li key={entry.model} className="flex justify-between gap-4">
+              <span className="truncate">{entry.model}</span>
+              <span className="shrink-0">
+                {formatTokens(entry.promptTokens)} in /{" "}
+                {formatTokens(entry.completionTokens)} out ·{" "}
+                {formatUsd(entry.costUsd)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-2 text-[10px] text-zinc-600">
+        {usage.partial && "* "}
+        Estimate only, from rates last checked{" "}
+        {pricing?.updated ?? "—"}. Reporting only — nothing here limits sending.
+      </p>
+    </section>
   );
 }
 
@@ -266,7 +349,11 @@ export default function ConversationPage({ params }: { params: { id: string } })
         later question can finish first without moving anything.
       </p>
 
-      <SnapshotInspector conversationId={params.id} />
+      {/* Side by side so the two diagnostic panels don't crowd out the thread. */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <UsagePanel messages={messages} />
+        <SnapshotInspector conversationId={params.id} />
+      </div>
     </div>
   );
 }
