@@ -156,9 +156,12 @@ export function useConversation(conversationId: string) {
     [conversationId]
   );
 
-  const busy = messages.some(
+  // A count, not a boolean. Nothing about sending depends on it any more — it
+  // is reported so the UI can say how many answers are in flight, not to gate
+  // anything.
+  const inFlight = messages.filter(
     (message) => message.status === "pending" || message.status === "streaming"
-  );
+  ).length;
 
-  return { messages, title, connected, loading, error, busy, send, refresh };
+  return { messages, title, connected, loading, error, inFlight, send, refresh };
 }

@@ -18,6 +18,14 @@ class Settings(BaseSettings):
 
     max_concurrent_jobs_per_conversation: int = 8
 
+    # Swaps in a deterministic local generator instead of calling Gemini. Off by
+    # default and never inferred from a missing key — a silent fallback to fake
+    # answers would be far worse than a visible error. It exists so the
+    # concurrency behaviour can be exercised repeatably and for free, which the
+    # Stage 11 load test needs.
+    use_fake_llm: bool = False
+    fake_llm_chunk_delay_ms: int = 45
+
     cors_origins: str = "http://localhost:3000"
 
     @property

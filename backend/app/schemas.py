@@ -16,6 +16,7 @@ class MessageOut(BaseModel):
     context_cutoff: datetime
     dependency_mode: str
     parent_message_id: str | None
+    prompt_message_id: str | None
     prompt_tokens: int | None
     completion_tokens: int | None
     model: str | None

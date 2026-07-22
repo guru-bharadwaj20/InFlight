@@ -6,6 +6,7 @@ Keeping the surface that small is what keeps the concurrency work in jobs.py
 provider-agnostic — swapping models (or vendors) touches this file only.
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -86,12 +87,48 @@ def to_contents(turns: Sequence[Turn]) -> list[types.Content]:
     ]
 
 
+FAKE_FILLER = (
+    "This is a deterministic stand-in response used to exercise the "
+    "orchestration layer without spending tokens on a real provider. "
+)
+
+
+async def _stream_fake(
+    turns: Sequence[Turn], usage: Usage
+) -> AsyncIterator[str]:
+    """A local generator that streams like the real one, minus the network.
+
+    Answer length scales with the prompt, so a deliberately wordy prompt takes
+    visibly longer to finish than a terse one. That is what makes out-of-order
+    completion demonstrable: the ordering the bubbles resolve in stops matching
+    the order they were submitted.
+    """
+    prompt = turns[-1].content if turns else ""
+    words = FAKE_FILLER.split()
+    count = max(12, min(len(prompt.split()) * 6, 160))
+    delay = get_settings().fake_llm_chunk_delay_ms / 1000
+
+    usage.prompt_tokens = sum(len(t.content.split()) for t in turns)
+    usage.completion_tokens = 0
+
+    yield f"[fake] Re: {prompt[:60]}\n\n"
+    for i in range(count):
+        await asyncio.sleep(delay)
+        usage.completion_tokens = i + 1
+        yield words[i % len(words)] + " "
+
+
 async def stream_completion(
     turns: Sequence[Turn],
     usage: Usage,
     model: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a completion for `turns`, recording token counts into `usage`."""
+    if get_settings().use_fake_llm:
+        async for text in _stream_fake(turns, usage):
+            yield text
+        return
+
     model = model or get_settings().generation_model
 
     stream = await get_client().aio.models.generate_content_stream(

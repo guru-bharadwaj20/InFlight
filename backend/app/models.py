@@ -94,6 +94,9 @@ class Message(Base):
     parent_message_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
+    prompt_message_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
 
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -101,8 +104,22 @@ class Message(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
-    parent: Mapped["Message | None"] = relationship(remote_side="Message.id", back_populates="children")
-    children: Mapped[list["Message"]] = relationship(back_populates="parent")
+    parent: Mapped["Message | None"] = relationship(
+        remote_side="Message.id",
+        foreign_keys=[parent_message_id],
+        back_populates="children",
+    )
+    children: Mapped[list["Message"]] = relationship(
+        foreign_keys=[parent_message_id], back_populates="parent"
+    )
+    prompt: Mapped["Message | None"] = relationship(
+        remote_side="Message.id",
+        foreign_keys=[prompt_message_id],
+        back_populates="answers",
+    )
+    answers: Mapped[list["Message"]] = relationship(
+        foreign_keys=[prompt_message_id], back_populates="prompt"
+    )
 
     __table_args__ = (
         Index("messages_conversation_id_submitted_at_idx", "conversation_id", "submitted_at"),

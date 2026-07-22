@@ -10,8 +10,8 @@ This is a systems/concurrency project wearing an AI costume. The interesting par
 is not the model call — it is deciding what "the conversation so far" means when
 two answers are in flight at once.
 
-**Status: Stage 2 of 12 complete** — a working streaming chat, deliberately kept
-sequential by a client-side input lock. Stage 3 deletes that lock.
+**Status: Stage 3 of 12 complete** — the input lock is gone. Several prompts
+generate at once against one shared history, each reading its own snapshot.
 
 ---
 
@@ -176,13 +176,58 @@ Failures are per job: a missing API key or a provider error marks that one row
 
 ---
 
+## What Stage 3 gives you
+
+The `disabled` attribute is gone. Fire a second prompt while the first is still
+generating and both stream into the same socket at once, each routed to its own
+bubble by `job_id`. Measured with the local generator, three prompts fired
+back-to-back:
+
+```
+3 prompts accepted in 866 ms total (never blocked)
+peak simultaneous streaming jobs: 3
+chunks from different jobs interleaved: True
+submitted order : ['LONG', 'SHORT', 'MID']
+completed order : ['SHORT', 'MID', 'LONG']
+```
+
+### The bug concurrency exposed: unanswered sibling prompts
+
+User rows commit the instant they are submitted. So the moment a job takes its
+snapshot, the conversation may already contain *other* prompts that were fired
+concurrently and have no answers yet. Feeding those to the model is actively
+wrong — it reads them as part of the question and tries to answer all of them at
+once. In testing, three concurrent prompts produced three answers addressed to
+the wrong questions.
+
+Visibility alone is therefore not the whole rule. **Context is assembled from
+answered pairs**: an exchange enters the transcript only when both halves have
+committed, and the job's own prompt is appended last. A prompt still waiting on
+its answer is invisible, exactly like the answer itself.
+
+Making that exact needs one thing timestamps cannot give you — which prompt an
+answer belongs to, once "the most recent one" is ambiguous. Hence
+`prompt_message_id` on the assistant row. Verified: of two prompts fired
+simultaneously, neither job's context contains the other's prompt, while a job
+started after both settled sees all of it.
+
+### Testing concurrency without a provider
+
+`USE_FAKE_LLM=true` swaps in a deterministic local generator that streams with a
+delay, with answer length scaled to prompt length so out-of-order completion is
+reproducible. It is off by default and never inferred from a missing key — a
+silent fallback to fake answers would be worse than a visible error. It exists
+because Stage 11's load test needs streaming that is free and repeatable.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
 | --- | --- |
 | 1 ✅ | Foundations and data model |
 | 2 ✅ | Baseline single-threaded chat (the control group) |
-| 3 | Concurrency plumbing — remove the input lock |
+| 3 ✅ | Concurrency plumbing — remove the input lock |
 | 4 | History reconciliation UI |
 | 5 | Token/cost dashboard |
 | 6 | Dependency heuristic |

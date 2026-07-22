@@ -130,7 +130,10 @@ async def send_prompt(
         model=settings.generation_model,
     )
 
-    session.add_all([user_message, assistant_message])
+    session.add(user_message)
+    await session.flush()  # assigns the prompt id the job needs to point at
+    assistant_message.prompt_message_id = user_message.id
+    session.add(assistant_message)
     await session.commit()
 
     # Registered here rather than inside the task so that the count above and the

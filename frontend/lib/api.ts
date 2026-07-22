@@ -28,6 +28,8 @@ export interface Message {
   context_cutoff: string;
   dependency_mode: "auto" | "chained" | "independent";
   parent_message_id: string | null;
+  /** On an assistant row, the user message it is answering. */
+  prompt_message_id: string | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   model: string | null;

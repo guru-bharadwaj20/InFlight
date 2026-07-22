@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import redis_client
 from .db import session_factory
 from .llm import LLMNotConfigured, Turn, Usage, stream_completion
-from .models import Message, Status, utcnow
+from .models import Message, Role, Status, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -48,24 +48,57 @@ async def cancel(job_id: str) -> bool:
 
 
 async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
-    """The transcript this job is allowed to read.
+    """The transcript this job is allowed to read: settled exchanges, then its own prompt.
 
-    Only rows that *completed* strictly before the cutoff are visible, ordered by
-    when they committed rather than when they were submitted. A prompt submitted
-    earlier but still streaming is correctly absent — it hasn't committed, so as
-    far as this job is concerned it does not exist.
+    Only rows that *completed* strictly before the cutoff are visible, in commit
+    order rather than submission order. But visibility alone isn't the whole
+    rule, because user rows commit the instant they are submitted: at the moment
+    a job takes its snapshot, the conversation can already contain sibling
+    prompts that were fired concurrently and have no answers yet.
+
+    Including those would be actively wrong — the model would read them as part
+    of the question it is being asked and try to answer all of them at once. So
+    context is assembled as *answered pairs*: an exchange enters the transcript
+    only when both halves have committed. A prompt still waiting on its answer is
+    invisible, exactly like the answer itself.
+
+    This job's own prompt is then appended last, which is what makes it the
+    question rather than another piece of history.
     """
-    result = await session.execute(
+    answered = await session.execute(
         select(Message)
         .where(
             Message.conversation_id == job.conversation_id,
+            Message.role == Role.ASSISTANT,
             Message.status == Status.COMPLETE,
             Message.completed_at.is_not(None),
             Message.completed_at < job.context_cutoff,
         )
         .order_by(Message.completed_at.asc())
     )
-    return [Turn(role=m.role, content=m.content or "") for m in result.scalars()]
+    answers = list(answered.scalars())
+
+    prompt_ids = {a.prompt_message_id for a in answers if a.prompt_message_id}
+    if job.prompt_message_id:
+        prompt_ids.add(job.prompt_message_id)
+
+    prompts: dict[str, Message] = {}
+    if prompt_ids:
+        found = await session.execute(select(Message).where(Message.id.in_(prompt_ids)))
+        prompts = {m.id: m for m in found.scalars()}
+
+    turns: list[Turn] = []
+    for answer in answers:
+        prompt = prompts.get(answer.prompt_message_id or "")
+        if prompt is not None:
+            turns.append(Turn(role=Role.USER, content=prompt.content or ""))
+        turns.append(Turn(role=Role.ASSISTANT, content=answer.content or ""))
+
+    own_prompt = prompts.get(job.prompt_message_id or "")
+    if own_prompt is not None:
+        turns.append(Turn(role=Role.USER, content=own_prompt.content or ""))
+
+    return turns
 
 
 async def _finish(

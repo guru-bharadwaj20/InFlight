@@ -65,6 +65,15 @@ model Message {
   /// Set when the user explicitly chained this prompt to an earlier one (Stage 8).
   parentMessageId String? @map("parent_message_id")
 
+  /// The user message this assistant job is answering. Null on user rows.
+  ///
+  /// Not derivable from timestamps once prompts can be submitted concurrently:
+  /// a job's snapshot may contain several prompts whose answers are still in
+  /// flight, and "the most recent one" is then ambiguous. Storing the link makes
+  /// prompt/answer pairing exact, which context assembly and the Stage 9
+  /// retrospective check both depend on.
+  promptMessageId String? @map("prompt_message_id")
+
   /// Usage, captured from the API response on completion (Stage 5).
   promptTokens     Int?    @map("prompt_tokens")
   completionTokens Int?    @map("completion_tokens")
@@ -76,6 +85,8 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   parent       Message?     @relation("MessageChain", fields: [parentMessageId], references: [id], onDelete: SetNull)
   children     Message[]    @relation("MessageChain")
+  prompt       Message?     @relation("MessagePrompt", fields: [promptMessageId], references: [id], onDelete: SetNull)
+  answers      Message[]    @relation("MessagePrompt")
 
   // Display order: the message list is always read in submittedAt order.
   @@index([conversationId, submittedAt])

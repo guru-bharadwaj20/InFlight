@@ -109,7 +109,7 @@ function SnapshotInspector({ conversationId }: { conversationId: string }) {
 }
 
 export default function ConversationPage({ params }: { params: { id: string } }) {
-  const { messages, title, connected, loading, error, busy, send } =
+  const { messages, title, connected, loading, error, inFlight, send } =
     useConversation(params.id);
   const [draft, setDraft] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
@@ -121,7 +121,9 @@ export default function ConversationPage({ params }: { params: { id: string } })
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || busy) return;
+    if (!content) return;
+    // Cleared before the request resolves, so the box is ready for the next
+    // prompt immediately rather than after a round trip.
     setDraft("");
     await send(content);
   }
@@ -175,13 +177,12 @@ export default function ConversationPage({ params }: { params: { id: string } })
             if (event.key === "Enter" && !event.shiftKey) void submit(event);
           }}
           rows={1}
-          disabled={busy}
-          placeholder={busy ? "Waiting for the response…" : "Send a message"}
-          className="flex-1 resize-none rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600 disabled:opacity-50"
+          placeholder="Send a message — you don't have to wait"
+          className="flex-1 resize-none rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600"
         />
         <button
           type="submit"
-          disabled={busy || !draft.trim()}
+          disabled={!draft.trim()}
           className="rounded bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 disabled:opacity-40"
         >
           Send
@@ -189,9 +190,9 @@ export default function ConversationPage({ params }: { params: { id: string } })
       </form>
 
       <p className="text-xs text-zinc-600">
-        The input is locked while a response streams. That lock is the
-        <em> only</em> thing making this chat sequential — the server already
-        accepts a new prompt at any time. Stage 3 deletes it.
+        {inFlight > 0
+          ? `${inFlight} ${inFlight === 1 ? "answer is" : "answers are"} generating. Send another — the input never locks.`
+          : "The input never locks. Send a follow-up while an answer is still generating and both run at once."}
       </p>
 
       <SnapshotInspector conversationId={params.id} />
