@@ -21,7 +21,7 @@ from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
 from .llm import LLMNotConfigured, Turn, Usage, classify_dependency, stream_completion
-from .models import Message, Role, Status, utcnow
+from .models import DependencyMode, Message, Role, Status, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,52 @@ async def _text_of(session: AsyncSession, message_id: str | None) -> str:
     return result.scalar_one_or_none() or ""
 
 
+async def _chain_target(session: AsyncSession, job: Message) -> str | None:
+    """The message a chained job must actually wait for.
+
+    Chaining to an assistant bubble means waiting for that answer. Chaining to a
+    *question* means waiting for the answer to it — the user's intent is the same
+    either way, and the prompt row itself is already complete, so waiting on it
+    would return instantly and silently do nothing.
+    """
+    parent_id = job.parent_message_id
+    if not parent_id:
+        return None
+
+    result = await session.execute(select(Message.role).where(Message.id == parent_id))
+    role = result.scalar_one_or_none()
+    if role != Role.USER:
+        return parent_id
+
+    answer = await session.execute(
+        select(Message.id).where(Message.prompt_message_id == parent_id)
+    )
+    return answer.scalars().first() or parent_id
+
+
+async def _await_settled(
+    session: AsyncSession, message_id: str | None, settings
+) -> None:
+    """Block until one specific message reaches a terminal state."""
+    if not message_id:
+        return
+
+    deadline = asyncio.get_running_loop().time() + settings.max_dependency_wait_seconds
+    interval = settings.dependency_poll_interval_ms / 1000
+
+    while True:
+        result = await session.execute(
+            select(Message.status).where(Message.id == message_id)
+        )
+        status = result.scalar_one_or_none()
+        if status is None or status in Status.TERMINAL:
+            return
+        if asyncio.get_running_loop().time() > deadline:
+            logger.warning("chained job gave up waiting for %s", message_id)
+            return
+        await asyncio.sleep(interval)
+
+
 async def _resolve_dependency(
     session: AsyncSession, job: Message, conversation_id: str
 ) -> None:
@@ -158,6 +204,16 @@ async def _resolve_dependency(
     """
     settings = get_settings()
     verdict = job.detected_dependency
+
+    if job.dependency_mode == DependencyMode.CHAINED:
+        # Deterministic override: wait for exactly the message the user pointed
+        # at, and skip detection entirely. This is the safety net for when the
+        # heuristic and classifier are both wrong, so it cannot be routed
+        # through either of them.
+        await _await_settled(session, await _chain_target(session, job), settings)
+        job.context_cutoff = utcnow()
+        await session.commit()
+        return
 
     if verdict == Verdict.UNSURE:
         pending = await _earlier_in_flight(session, job)

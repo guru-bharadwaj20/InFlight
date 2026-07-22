@@ -149,9 +149,9 @@ export function useConversation(conversationId: string) {
   }, [conversationId, applyFrame]);
 
   const send = useCallback(
-    async (content: string) => {
+    async (content: string, parentMessageId?: string | null) => {
       try {
-        const accepted = await api.sendPrompt(conversationId, content);
+        const accepted = await api.sendPrompt(conversationId, content, parentMessageId);
         setRaw((current) => [
           ...current,
           accepted.user_message,

@@ -45,6 +45,9 @@ class ConversationCreate(BaseModel):
 
 class PromptCreate(BaseModel):
     content: str = Field(min_length=1)
+    # Set to chain this prompt to an earlier message: a deterministic override
+    # that makes the job wait, whatever dependency detection would have said.
+    parent_message_id: str | None = None
 
 
 class PromptAccepted(BaseModel):

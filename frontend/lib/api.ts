@@ -142,11 +142,19 @@ export const api = {
   getConversation: (id: string) =>
     request<ConversationDetail>(`/conversations/${id}`),
 
-  /** Returns as soon as the rows exist — it does not wait for the model. */
-  sendPrompt: (conversationId: string, content: string) =>
+  /**
+   * Returns as soon as the rows exist — it does not wait for the model.
+   * `parentMessageId` chains the prompt: a deterministic override that makes
+   * the job wait, whatever dependency detection would have concluded.
+   */
+  sendPrompt: (
+    conversationId: string,
+    content: string,
+    parentMessageId?: string | null
+  ) =>
     request<PromptAccepted>(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, parent_message_id: parentMessageId ?? null }),
     }),
 
   /** What a job stamped at `at` would be allowed to read as context. */

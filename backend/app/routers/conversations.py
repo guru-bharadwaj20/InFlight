@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import dependency, jobs, redis_client
 from ..config import Settings, get_settings
 from ..db import get_session
-from ..models import Conversation, Message, Role, Status, utcnow
+from ..models import Conversation, DependencyMode, Message, Role, Status, utcnow
 from ..ordering import order_for_display
 from ..schemas import (
     ConversationCreate,
@@ -99,6 +99,14 @@ async def send_prompt(
     """
     await _load_conversation(session, conversation_id)
 
+    if payload.parent_message_id:
+        parent = await session.get(Message, payload.parent_message_id)
+        if parent is None or parent.conversation_id != conversation_id:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "parent_message_id must name a message in this conversation",
+            )
+
     in_flight = await redis_client.active_job_count(conversation_id)
     if in_flight >= settings.max_concurrent_jobs_per_conversation:
         raise HTTPException(
@@ -124,9 +132,25 @@ async def send_prompt(
     # coarse system clock, and `completed_at < cutoff` is a strict comparison.
     cutoff = submitted_at + timedelta(microseconds=1)
 
-    # Cheap, prospective, and recorded rather than acted on: Stage 6 measures
-    # dependence, Stage 7 is what starts making jobs wait on it.
-    detection = dependency.evaluate(payload.content)
+    if payload.parent_message_id:
+        # An explicit chain is a deterministic override, so detection is not
+        # consulted at all. This is the escape hatch for when the heuristic and
+        # the classifier are both wrong, which is why it must not depend on
+        # either of them being right.
+        mode = DependencyMode.CHAINED
+        verdict, source, reason = (
+            dependency.Verdict.DEPENDENT,
+            dependency.Source.CHAINED,
+            "chained to an earlier message by the user",
+        )
+    else:
+        mode = DependencyMode.AUTO
+        detection = dependency.evaluate(payload.content)
+        verdict, source, reason = (
+            detection.verdict,
+            dependency.Source.HEURISTIC,
+            detection.reason,
+        )
 
     assistant_message = Message(
         conversation_id=conversation_id,
@@ -136,9 +160,11 @@ async def send_prompt(
         submitted_at=cutoff,
         context_cutoff=cutoff,
         model=settings.generation_model,
-        detected_dependency=detection.verdict,
-        dependency_source=dependency.Source.HEURISTIC,
-        dependency_reason=detection.reason,
+        dependency_mode=mode,
+        parent_message_id=payload.parent_message_id,
+        detected_dependency=verdict,
+        dependency_source=source,
+        dependency_reason=reason,
     )
 
     session.add(user_message)

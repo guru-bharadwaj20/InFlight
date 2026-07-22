@@ -296,6 +296,12 @@ Note that with `USE_FAKE_LLM=true` the "tokens" are word counts from the local
 generator, so the cost estimate is meaningless — it exercises the plumbing, not
 real spend.
 
+**On a free-tier API key the estimate is also not what you pay** — free tier is
+$0, and capped instead by requests per day (20/day for `gemini-3.6-flash` at time
+of writing, per model). The dashboard prices usage at standard paid-tier rates
+regardless, because that is what the same traffic would cost in production. Worth
+knowing before reading the number as a bill.
+
 ---
 
 ## What Stage 6 gives you
@@ -392,6 +398,29 @@ concurrently.
 
 ---
 
+## What Stage 8 gives you
+
+A `↩ chain` affordance on any bubble. The next prompt is then created with
+`dependencyMode = "chained"` and a `parentMessageId`, and its job waits for that
+message before taking its snapshot — **whatever detection would have concluded**.
+
+This is the escape hatch for when Stages 6–7 are wrong in either direction, so it
+deliberately does not route through them: no heuristic, no classifier, no verdict
+to be wrong. It is the one path in the system that is guaranteed correct by
+construction rather than by accuracy.
+
+Chaining works on a bubble that is *still streaming* — that is rather the point,
+since it locks in the wait before the answer even exists. Chaining to a question
+rather than an answer waits for that question's answer, since the prompt row is
+already complete and waiting on it would silently do nothing.
+
+Verified: a prompt chained to a still-generating message waited for it, moved its
+cutoff past that message's completion, and read the result. The same prompt text
+sent *unchained* is judged `independent` and fires immediately — so the override
+was doing real work, not agreeing with detection by luck.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -403,7 +432,7 @@ concurrently.
 | 5 ✅ | Token/cost dashboard |
 | 6 ✅ | Dependency heuristic |
 | 7 ✅ | Dependency classifier (cheap model call, ambiguous cases only) |
-| 8 | Manual "chain" override |
+| 8 ✅ | Manual "chain" override |
 | 9 | Optimistic fallback + regenerate nudge |
 | 10 | Resilience: cancel, reconnect, per-job failure isolation |
 | 11 | Evaluation harness |

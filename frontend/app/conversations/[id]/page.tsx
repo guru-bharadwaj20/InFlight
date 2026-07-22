@@ -48,7 +48,15 @@ function StatusChip({ status }: { status: MessageStatus }) {
   );
 }
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({
+  message,
+  onChain,
+  chained,
+}: {
+  message: Message;
+  onChain: (message: Message) => void;
+  chained: boolean;
+}) {
   const isUser = message.role === "user";
   const unsettled = message.status === "pending" || message.status === "streaming";
   const failed = message.status === "error" || message.status === "cancelled";
@@ -64,14 +72,30 @@ function Bubble({ message }: { message: Message }) {
       className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`min-w-0 max-w-[80ch] rounded-2xl px-4 py-3 ${
+        className={`group relative min-w-0 max-w-[80ch] rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-zinc-100 text-zinc-900"
             : `border bg-zinc-900/60 text-zinc-100 ${
-                unsettled ? "border-streaming/40" : "border-zinc-800"
+                chained
+                  ? "border-pending"
+                  : unsettled
+                    ? "border-streaming/40"
+                    : "border-zinc-800"
               }`
         }`}
       >
+        {/* Chaining works on an in-flight bubble too — that is the point: it
+            guarantees the wait before the answer even exists. */}
+        <button
+          onClick={() => onChain(message)}
+          title="Chain a follow-up to this message — always waits for it"
+          className={`absolute -top-2 ${
+            isUser ? "left-2" : "right-2"
+          } rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 opacity-0 transition-opacity hover:text-zinc-100 focus:opacity-100 group-hover:opacity-100`}
+        >
+          ↩ chain
+        </button>
+
         {failed ? (
           <p className="text-sm text-failed">
             {message.error ?? "generation failed"}
@@ -258,6 +282,7 @@ export default function ConversationPage({ params }: { params: { id: string } })
   const { messages, title, connected, loading, error, inFlight, send } =
     useConversation(params.id);
   const [draft, setDraft] = useState("");
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const [stick, setStick] = useState(true);
@@ -283,7 +308,9 @@ export default function ConversationPage({ params }: { params: { id: string } })
     // prompt immediately rather than after a round trip.
     setDraft("");
     setStick(true);
-    await send(content);
+    const parent = replyTo;
+    setReplyTo(null);
+    await send(content, parent?.id);
   }
 
   return (
@@ -335,13 +362,43 @@ export default function ConversationPage({ params }: { params: { id: string } })
           <ul className="space-y-3">
             <AnimatePresence initial={false}>
               {messages.map((message) => (
-                <Bubble key={message.id} message={message} />
+                <Bubble
+                  key={message.id}
+                  message={message}
+                  onChain={setReplyTo}
+                  chained={replyTo?.id === message.id}
+                />
               ))}
             </AnimatePresence>
           </ul>
         )}
         <div ref={bottom} />
       </div>
+
+      <AnimatePresence>
+        {replyTo && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center justify-between gap-3 overflow-hidden rounded border border-pending/50 bg-pending/5 px-3 py-2"
+          >
+            <p className="min-w-0 truncate text-xs text-zinc-400">
+              <span className="font-mono text-pending">chained</span> — this
+              prompt will wait for{" "}
+              <span className="text-zinc-200">
+                {(replyTo.content ?? "(still generating)").slice(0, 60)}
+              </span>
+            </p>
+            <button
+              onClick={() => setReplyTo(null)}
+              className="shrink-0 font-mono text-[10px] text-zinc-500 hover:text-zinc-200"
+            >
+              cancel
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <form onSubmit={submit} className="flex gap-2">
         <textarea
