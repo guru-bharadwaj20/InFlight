@@ -120,6 +120,22 @@ async def classify_dependency(
     A failure here returns True: if we cannot tell, waiting costs latency while
     guessing independence costs a wrong answer.
     """
+    try:
+        return await classify_dependency_strict(prompt, in_flight, model)
+    except Exception:
+        logger.exception("dependency classifier failed; assuming dependent")
+        return True
+
+
+async def classify_dependency_strict(
+    prompt: str, in_flight: Sequence[str], model: str | None = None
+) -> bool:
+    """As `classify_dependency`, but lets provider errors propagate.
+
+    The eval harness needs this. Folding a quota rejection into "dependent"
+    scores an outage as a judgement, which is how you end up publishing a
+    classifier accuracy that is really an error rate.
+    """
     settings = get_settings()
 
     if settings.use_fake_llm:
@@ -135,21 +151,17 @@ async def classify_dependency(
         f"New message:\n- {prompt[:500]}"
     )
 
-    try:
-        response = await get_client().aio.models.generate_content(
-            model=model or settings.classifier_model,
-            contents=[types.Content(role="user", parts=[types.Part.from_text(text=question)])],
-            config=types.GenerateContentConfig(
-                system_instruction=DEPENDENCY_SYSTEM,
-                response_mime_type="application/json",
-                response_schema=DEPENDENCY_SCHEMA,
-                temperature=0,
-            ),
-        )
-        return bool(json.loads(response.text)["depends_on_prior"])
-    except Exception:
-        logger.exception("dependency classifier failed; assuming dependent")
-        return True
+    response = await get_client().aio.models.generate_content(
+        model=model or settings.classifier_model,
+        contents=[types.Content(role="user", parts=[types.Part.from_text(text=question)])],
+        config=types.GenerateContentConfig(
+            system_instruction=DEPENDENCY_SYSTEM,
+            response_mime_type="application/json",
+            response_schema=DEPENDENCY_SCHEMA,
+            temperature=0,
+        ),
+    )
+    return bool(json.loads(response.text)["depends_on_prior"])
 
 
 FAKE_FAIL_MARKER = "[[fail]]"

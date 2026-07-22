@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from app.dependency import Verdict, evaluate
-from app.llm import classify_dependency
+from app.llm import classify_dependency_strict
 
 CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
 
@@ -32,18 +32,33 @@ async def main() -> int:
         return 0
 
     results = await asyncio.gather(
-        *[classify_dependency(c["prompt"], IN_FLIGHT) for c in deferred]
+        *[classify_dependency_strict(c["prompt"], IN_FLIGHT) for c in deferred],
+        return_exceptions=True,
     )
 
-    wrong = []
+    wrong, failed = [], []
     for case, depends in zip(deferred, results):
+        if isinstance(depends, BaseException):
+            # Counted apart from the score. A provider outage is not a judgement,
+            # and averaging the two together reports an error rate as accuracy.
+            failed.append((case["prompt"], type(depends).__name__))
+            continue
         got = Verdict.DEPENDENT if depends else Verdict.INDEPENDENT
         if got != case["label"]:
             wrong.append((case["prompt"], case["label"], got))
 
-    correct = len(deferred) - len(wrong)
+    scored = len(deferred) - len(failed)
+    correct = scored - len(wrong)
     print(f"deferred cases   {len(deferred)}")
-    print(f"correct          {correct}/{len(deferred)}  ({correct / len(deferred):.1%})")
+    if failed:
+        print(f"provider errors  {len(failed)}  (excluded from the score)")
+        for prompt, kind in failed[:3]:
+            print(f"    {kind}: {prompt[:56]}")
+    if not scored:
+        print("nothing scored — every call failed")
+        return 1
+    print(f"scored           {scored}")
+    print(f"correct          {correct}/{scored}  ({correct / scored:.1%})")
 
     # Which way it errs matters more than the rate: a false "independent" ships a
     # wrong answer, a false "dependent" only costs a wait.
