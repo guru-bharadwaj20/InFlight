@@ -98,6 +98,10 @@ class Message(Base):
         String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
 
+    detected_dependency: Mapped[str | None] = mapped_column(String, nullable=True)
+    dependency_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    dependency_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     model: Mapped[str | None] = mapped_column(String, nullable=True)

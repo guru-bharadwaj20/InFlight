@@ -96,6 +96,20 @@ function Bubble({ message }: { message: Message }) {
         {!isUser && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
             <StatusChip status={message.status} />
+            {message.detected_dependency && message.detected_dependency !== "independent" && (
+              // Only worth showing when detection concluded something other than
+              // "nothing to wait for" — otherwise it is noise on every bubble.
+              <span
+                className={`font-mono text-[10px] ${
+                  message.detected_dependency === "dependent"
+                    ? "text-pending"
+                    : "text-zinc-600"
+                }`}
+                title={`${message.dependency_reason ?? ""} (${message.dependency_source ?? ""})`}
+              >
+                {message.detected_dependency}
+              </span>
+            )}
             {message.completion_tokens !== null && (
               <span className="font-mono text-[10px] text-zinc-600">
                 {message.prompt_tokens} in / {message.completion_tokens} out

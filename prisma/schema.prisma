@@ -79,6 +79,17 @@ model Message {
   /// retrospective check both depend on.
   promptMessageId String? @map("prompt_message_id")
 
+  /// What dependency detection concluded about this prompt, and how.
+  ///
+  /// Distinct from `dependencyMode`, which is what the *user* asked for.
+  /// These record what the system worked out on its own: "dependent" |
+  /// "independent" | "unsure", from "heuristic" | "classifier" | "chained",
+  /// with the human-readable reason kept so the UI can explain a wait rather
+  /// than just imposing one.
+  detectedDependency String? @map("detected_dependency")
+  dependencySource   String? @map("dependency_source")
+  dependencyReason   String? @map("dependency_reason")
+
   /// Usage, captured from the API response on completion (Stage 5).
   promptTokens     Int?    @map("prompt_tokens")
   completionTokens Int?    @map("completion_tokens")

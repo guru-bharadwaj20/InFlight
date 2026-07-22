@@ -56,6 +56,9 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/scripts:/app/scripts
+      # Labelled cases for the dependency eval, kept at the repo root so the
+      # data set is visible without digging into the backend.
+      - ./eval:/app/eval
 
   frontend:
     build: ./frontend

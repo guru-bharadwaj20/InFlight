@@ -30,6 +30,10 @@ export interface Message {
   parent_message_id: string | null;
   /** On an assistant row, the user message it is answering. */
   prompt_message_id: string | null;
+  /** What dependency detection concluded, and how — not what the user asked for. */
+  detected_dependency: "dependent" | "independent" | "unsure" | null;
+  dependency_source: "heuristic" | "classifier" | "chained" | null;
+  dependency_reason: string | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   model: string | null;

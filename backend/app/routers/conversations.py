@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import jobs, redis_client
+from .. import dependency, jobs, redis_client
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..models import Conversation, Message, Role, Status, utcnow
@@ -123,6 +123,11 @@ async def send_prompt(
     # two `utcnow()` calls in quick succession can return the same value on a
     # coarse system clock, and `completed_at < cutoff` is a strict comparison.
     cutoff = submitted_at + timedelta(microseconds=1)
+
+    # Cheap, prospective, and recorded rather than acted on: Stage 6 measures
+    # dependence, Stage 7 is what starts making jobs wait on it.
+    detection = dependency.evaluate(payload.content)
+
     assistant_message = Message(
         conversation_id=conversation_id,
         role=Role.ASSISTANT,
@@ -131,6 +136,9 @@ async def send_prompt(
         submitted_at=cutoff,
         context_cutoff=cutoff,
         model=settings.generation_model,
+        detected_dependency=detection.verdict,
+        dependency_source=dependency.Source.HEURISTIC,
+        dependency_reason=detection.reason,
     )
 
     session.add(user_message)

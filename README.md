@@ -298,6 +298,49 @@ real spend.
 
 ---
 
+## What Stage 6 gives you
+
+Every prompt is now scored at submit time for whether it depends on an answer
+that does not exist yet. Stage 6 only *records* the verdict — Stage 7 is what
+starts making jobs wait on it — so the concurrent behaviour is unchanged.
+
+Three verdicts, chosen because the errors are not symmetric:
+
+| Verdict | Action | Cost if wrong |
+| --- | --- | --- |
+| `dependent` | wait for the predecessor | latency |
+| `independent` | fire immediately | **correctness** |
+| `unsure` | escalate to the classifier | one cheap model call |
+
+Against 38 hand-labelled prompts in
+[eval/dependency_cases.json](eval/dependency_cases.json):
+
+```
+decided           27  (71% of set)
+deferred (unsure) 11  -> Stage 7 classifier
+correct        27/27  (100% of decided)
+```
+
+`docker compose exec backend python -m scripts.eval_dependency`
+
+**Deferring is not counted as an error.** Those 11 cases are the ones Stage 7
+exists for. A heuristic that answered all 38 confidently and got a fifth wrong
+would be worse than one that answers 27 and knows when it doesn't know — 100% is
+a statement about coverage-adjusted precision, not about the problem being
+solved.
+
+It is keyword and shape matching, not a parser. It has no notion of what a noun
+is, so "does this pronoun have an antecedent?" is approximated by "does any
+content word appear before it?" — which is why that approximation only ever
+*downgrades* a verdict to `unsure`, never promotes one to `independent`. Rules
+are scoped to avoid obvious over-reach: "do the same for Rust" is dependent,
+while "are these two the same?" defers.
+
+The verdict, its source, and its human-readable reason are all stored on the
+row, so the UI can explain a wait rather than just imposing one.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -307,7 +350,7 @@ real spend.
 | 3 ✅ | Concurrency plumbing — remove the input lock |
 | 4 ✅ | History reconciliation UI |
 | 5 ✅ | Token/cost dashboard |
-| 6 | Dependency heuristic |
+| 6 ✅ | Dependency heuristic |
 | 7 | Dependency classifier (cheap model call, ambiguous cases only) |
 | 8 | Manual "chain" override |
 | 9 | Optimistic fallback + regenerate nudge |

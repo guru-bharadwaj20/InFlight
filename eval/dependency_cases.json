@@ -1,0 +1,49 @@
+{
+  "note": "Hand-labelled prompts for the Stage 6 heuristic and Stage 7 classifier. `label` is the ground truth: would this prompt be answered wrongly if fired without waiting for the previous answer? Judgement calls are recorded in `why`. Stage 11 grows this set and formalises the scoring.",
+  "labels": {
+    "dependent": "needs the previous answer's content to be answerable",
+    "independent": "self-contained; the previous answer adds nothing it needs"
+  },
+  "cases": [
+    { "prompt": "Continue.", "label": "dependent", "why": "pure continuation, no content of its own" },
+    { "prompt": "Go on.", "label": "dependent", "why": "pure continuation" },
+    { "prompt": "Tell me more.", "label": "dependent", "why": "more of what is only defined by the prior turn" },
+    { "prompt": "Elaborate on that.", "label": "dependent", "why": "explicit elaboration request" },
+    { "prompt": "Can you go deeper?", "label": "dependent", "why": "explicit depth request" },
+    { "prompt": "Explain that in more detail.", "label": "dependent", "why": "explicit detail request" },
+    { "prompt": "Summarise that in one sentence.", "label": "dependent", "why": "operates on the prior output" },
+    { "prompt": "Rephrase it more simply.", "label": "dependent", "why": "operates on the prior output" },
+    { "prompt": "Why?", "label": "dependent", "why": "bare follow-up; the subject lives in the prior turn" },
+    { "prompt": "How so?", "label": "dependent", "why": "bare follow-up" },
+    { "prompt": "What about the second one?", "label": "dependent", "why": "indexes into a prior list" },
+    { "prompt": "And the downsides?", "label": "dependent", "why": "opens as a continuation of a prior topic" },
+    { "prompt": "Is that always true?", "label": "dependent", "why": "bare demonstrative, nothing local to attach to" },
+    { "prompt": "Give me an example of it.", "label": "dependent", "why": "pronoun with no antecedent in the prompt" },
+    { "prompt": "What did you mean by the above?", "label": "dependent", "why": "explicit reference to a prior turn" },
+    { "prompt": "Your answer contradicts itself, explain.", "label": "dependent", "why": "explicitly about the prior answer" },
+    { "prompt": "As mentioned earlier, expand the third point.", "label": "dependent", "why": "explicit backward reference" },
+    { "prompt": "Rewrite the previous response as bullet points.", "label": "dependent", "why": "explicit reference to prior output" },
+    { "prompt": "Compare that with the alternative you suggested.", "label": "dependent", "why": "references prior suggestion" },
+    { "prompt": "Now do the same for Rust.", "label": "dependent", "why": "'the same' is defined only by the prior turn" },
+
+    { "prompt": "What is the capital of Japan?", "label": "independent", "why": "self-contained factual question" },
+    { "prompt": "Write a Python function that reverses a linked list.", "label": "independent", "why": "fully specified task" },
+    { "prompt": "Explain how TCP congestion control works.", "label": "independent", "why": "self-contained topic" },
+    { "prompt": "What is 17 times 3?", "label": "independent", "why": "self-contained arithmetic" },
+    { "prompt": "List three uses for baking soda.", "label": "independent", "why": "self-contained" },
+    { "prompt": "Who wrote The Left Hand of Darkness?", "label": "independent", "why": "self-contained" },
+    { "prompt": "Draft a polite email declining a meeting invitation.", "label": "independent", "why": "self-contained task" },
+    { "prompt": "Explain the difference between a process and a thread.", "label": "independent", "why": "self-contained" },
+    { "prompt": "What year did the Chernobyl disaster happen?", "label": "independent", "why": "self-contained" },
+    { "prompt": "Convert 100 kilometres to miles.", "label": "independent", "why": "self-contained" },
+
+    { "prompt": "Explain how a hash map works and why its lookups are fast.", "label": "independent", "why": "AMBIGUOUS: 'its' resolves to 'hash map' inside the same prompt" },
+    { "prompt": "Describe the Rust borrow checker and what problems it prevents.", "label": "independent", "why": "AMBIGUOUS: 'it' resolves locally" },
+    { "prompt": "What is Kubernetes and when should I use it?", "label": "independent", "why": "AMBIGUOUS: 'it' resolves locally" },
+    { "prompt": "Take that approach and apply it to sorting.", "label": "dependent", "why": "AMBIGUOUS: 'that approach' is not defined locally" },
+    { "prompt": "Refactor this function to be tail recursive.", "label": "dependent", "why": "AMBIGUOUS: 'this function' has no local referent; likely means one just shown" },
+    { "prompt": "Does this scale to a million users?", "label": "dependent", "why": "AMBIGUOUS: 'this' points outward" },
+    { "prompt": "Write a haiku about autumn and explain why it works.", "label": "independent", "why": "AMBIGUOUS: 'it' refers to the haiku this prompt asks for" },
+    { "prompt": "Compare Postgres and MySQL, then say which one you would pick.", "label": "independent", "why": "AMBIGUOUS: 'one' resolves locally" }
+  ]
+}
