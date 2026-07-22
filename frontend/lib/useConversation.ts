@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   conversationSocketUrl,
   type Frame,
   type Message,
 } from "./api";
+import { orderMessages } from "./ordering";
 
 /**
  * Owns the conversation's messages and the single socket feeding them.
@@ -16,7 +17,7 @@ import {
  * and building it in now would only have to be torn out again.
  */
 export function useConversation(conversationId: string) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [raw, setRaw] = useState<Message[]>([]);
   const [title, setTitle] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -28,7 +29,7 @@ export function useConversation(conversationId: string) {
   const lastSeq = useRef<Map<string, number>>(new Map());
 
   const patch = useCallback((id: string, changes: Partial<Message>) => {
-    setMessages((current) =>
+    setRaw((current) =>
       current.map((message) =>
         message.id === id ? { ...message, ...changes } : message
       )
@@ -47,7 +48,7 @@ export function useConversation(conversationId: string) {
         case "chunk":
           if (frame.seq <= seen) return;
           lastSeq.current.set(frame.job_id, frame.seq);
-          setMessages((current) =>
+          setRaw((current) =>
             current.map((message) =>
               message.id === frame.job_id
                 ? {
@@ -86,7 +87,7 @@ export function useConversation(conversationId: string) {
     try {
       const conversation = await api.getConversation(conversationId);
       setTitle(conversation.title);
-      setMessages(conversation.messages);
+      setRaw(conversation.messages);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -143,7 +144,7 @@ export function useConversation(conversationId: string) {
     async (content: string) => {
       try {
         const accepted = await api.sendPrompt(conversationId, content);
-        setMessages((current) => [
+        setRaw((current) => [
           ...current,
           accepted.user_message,
           accepted.assistant_message,
@@ -155,6 +156,12 @@ export function useConversation(conversationId: string) {
     },
     [conversationId]
   );
+
+  // Derived, not maintained in state: rows arrive from three places (initial
+  // fetch, POST response, frames) and concurrent sends resolve in whatever order
+  // the network returns them, so ordering at the edge is the only place it
+  // cannot be got wrong.
+  const messages = useMemo(() => orderMessages(raw), [raw]);
 
   // A count, not a boolean. Nothing about sending depends on it any more — it
   // is reported so the UI can say how many answers are in flight, not to gate

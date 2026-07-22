@@ -10,8 +10,9 @@ This is a systems/concurrency project wearing an AI costume. The interesting par
 is not the model call — it is deciding what "the conversation so far" means when
 two answers are in flight at once.
 
-**Status: Stage 3 of 12 complete** — the input lock is gone. Several prompts
-generate at once against one shared history, each reading its own snapshot.
+**Status: Stage 4 of 12 complete** — several prompts generate at once against one
+shared history, each reading its own snapshot, and the UI keeps display order
+and completion order visibly separate.
 
 ---
 
@@ -221,6 +222,38 @@ because Stage 11's load test needs streaming that is free and repeatable.
 
 ---
 
+## What Stage 4 gives you
+
+Once answers can land out of order, "when you asked" and "when you got an
+answer" stop being the same thing, and the UI has to express both without
+letting either corrupt the other.
+
+**Position comes from `submitted_at`, never `completed_at`.** The list reads
+top-to-bottom in the order you asked, and a bubble's slot is fixed the moment it
+is submitted. A fast answer landing before a slow one asked earlier changes that
+bubble's height and nothing else — nothing ever moves past anything.
+
+**The unit being ordered is the exchange, not the row.** This is the second bug
+concurrency exposed. Prompts submitted close enough together get stamped at the
+same instant — `submitted_at` ties are real and were observed in testing — and
+sorting rows independently under a tie interleaves two exchanges into prompt,
+prompt, answer, answer. So an answer sorts by *its prompt's* timestamp, and the
+sort falls through to id and then role to stay total, so React never sees two
+rows swap places. `orderMessages` in
+[frontend/lib/ordering.ts](frontend/lib/ordering.ts) is a pure function for
+exactly this reason; it has unit tests covering the tie case, the late-answer
+case, and idempotency.
+
+**Per-bubble state.** Each bubble carries its own `pending → streaming →
+complete` chip with a pulsing dot while unsettled, so several in-flight answers
+are obvious at a glance. Framer Motion's `layout` animates the height change as
+an answer fills in, and pending bubbles reserve a line so the first token grows a
+bubble instead of creating one. Autoscroll only follows the tail when you are
+already at it — with several answers growing at once, yanking the viewport down
+on every chunk would make reading anything above impossible.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -228,7 +261,7 @@ because Stage 11's load test needs streaming that is free and repeatable.
 | 1 ✅ | Foundations and data model |
 | 2 ✅ | Baseline single-threaded chat (the control group) |
 | 3 ✅ | Concurrency plumbing — remove the input lock |
-| 4 | History reconciliation UI |
+| 4 ✅ | History reconciliation UI |
 | 5 | Token/cost dashboard |
 | 6 | Dependency heuristic |
 | 7 | Dependency classifier (cheap model call, ambiguous cases only) |

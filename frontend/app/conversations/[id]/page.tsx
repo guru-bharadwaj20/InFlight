@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
-import { api, type Message } from "@/lib/api";
+import { api, type Message, type MessageStatus } from "@/lib/api";
 import { useConversation } from "@/lib/useConversation";
 
 function formatTime(value: string | null) {
@@ -10,7 +11,7 @@ function formatTime(value: string | null) {
   return new Date(value).toISOString().replace("T", " ").slice(11, 23);
 }
 
-const STATUS_COLOR: Record<Message["status"], string> = {
+const STATUS_COLOR: Record<MessageStatus, string> = {
   pending: "text-pending",
   streaming: "text-streaming",
   complete: "text-complete",
@@ -18,73 +19,116 @@ const STATUS_COLOR: Record<Message["status"], string> = {
   cancelled: "text-failed",
 };
 
-function Bubble({ message }: { message: Message }) {
-  const isUser = message.role === "user";
-  const streaming = message.status === "streaming" || message.status === "pending";
+const STATUS_DOT: Record<MessageStatus, string> = {
+  pending: "bg-pending",
+  streaming: "bg-streaming",
+  complete: "bg-complete",
+  error: "bg-failed",
+  cancelled: "bg-failed",
+};
+
+/** Pulses only while the job is unsettled, so "still working" reads at a glance. */
+function StatusChip({ status }: { status: MessageStatus }) {
+  const active = status === "pending" || status === "streaming";
 
   return (
-    <li className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${STATUS_COLOR[status]}`}
+    >
+      <motion.span
+        className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`}
+        animate={active ? { opacity: [1, 0.25, 1] } : { opacity: 1 }}
+        transition={
+          active ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" } : undefined
+        }
+      />
+      {status}
+    </span>
+  );
+}
+
+function Bubble({ message }: { message: Message }) {
+  const isUser = message.role === "user";
+  const unsettled = message.status === "pending" || message.status === "streaming";
+  const failed = message.status === "error" || message.status === "cancelled";
+
+  return (
+    <motion.li
+      // `layout` animates the height change when a bubble fills in, so a long
+      // answer landing does not snap the rest of the list down by 200px.
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ layout: { duration: 0.25, ease: "easeOut" }, duration: 0.2 }}
+      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+    >
       <div
-        className={`max-w-[80ch] rounded-2xl px-4 py-3 ${
+        className={`min-w-0 max-w-[80ch] rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-zinc-100 text-zinc-900"
-            : "border border-zinc-800 bg-zinc-900/60 text-zinc-100"
+            : `border bg-zinc-900/60 text-zinc-100 ${
+                unsettled ? "border-streaming/40" : "border-zinc-800"
+              }`
         }`}
       >
-        {message.status === "error" ? (
-          <p className="text-sm text-failed">{message.error ?? "generation failed"}</p>
+        {failed ? (
+          <p className="text-sm text-failed">
+            {message.error ?? "generation failed"}
+          </p>
+        ) : message.status === "pending" ? (
+          // Occupies a line from the start, so first token arriving grows the
+          // bubble instead of creating one.
+          <p className="text-sm italic text-zinc-500">waiting to start…</p>
         ) : (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
             {message.content}
-            {streaming && (
-              <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-streaming align-text-bottom" />
+            {message.status === "streaming" && (
+              <motion.span
+                className="ml-0.5 inline-block h-4 w-1.5 bg-streaming align-text-bottom"
+                animate={{ opacity: [1, 0.15, 1] }}
+                transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+              />
             )}
           </p>
         )}
 
-        {!isUser && message.status !== "streaming" && (
-          <div
-            className={`mt-2 flex flex-wrap gap-x-3 font-mono text-[10px] ${
-              STATUS_COLOR[message.status]
-            }`}
-          >
-            <span>{message.status}</span>
+        {!isUser && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <StatusChip status={message.status} />
             {message.completion_tokens !== null && (
-              <span className="text-zinc-600">
+              <span className="font-mono text-[10px] text-zinc-600">
                 {message.prompt_tokens} in / {message.completion_tokens} out
               </span>
             )}
-            {message.model && <span className="text-zinc-600">{message.model}</span>}
-            <span className="text-zinc-600">done {formatTime(message.completed_at)}</span>
+            {message.completed_at && (
+              <span className="font-mono text-[10px] text-zinc-600">
+                done {formatTime(message.completed_at)}
+              </span>
+            )}
           </div>
         )}
       </div>
-    </li>
+    </motion.li>
   );
 }
 
 function SnapshotInspector({ conversationId }: { conversationId: string }) {
   const [snapshot, setSnapshot] = useState<Message[] | null>(null);
-  const [open, setOpen] = useState(false);
 
   async function read() {
     setSnapshot(await api.getContextSnapshot(conversationId));
-    setOpen(true);
   }
 
   return (
-    <section className="rounded-lg border border-zinc-800 p-4">
+    <section className="rounded-lg border border-zinc-800 p-3">
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+        <p className="text-xs text-zinc-600">
+          <span className="font-medium uppercase tracking-wide text-zinc-400">
             Context snapshot
-          </h3>
-          <p className="mt-1 text-xs text-zinc-600">
-            What a job stamped <em>now</em> would be allowed to read. Only rows
-            that <em>completed</em> before the cutoff are in it, so anything
-            still streaming is absent.
-          </p>
-        </div>
+          </span>{" "}
+          — what a job stamped <em>now</em> could read. Anything still streaming
+          is absent.
+        </p>
         <button
           onClick={read}
           className="shrink-0 rounded border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-900"
@@ -93,13 +137,13 @@ function SnapshotInspector({ conversationId }: { conversationId: string }) {
         </button>
       </div>
 
-      {open && snapshot && (
+      {snapshot && (
         <ul className="mt-3 space-y-1 font-mono text-[11px] text-zinc-500">
           {snapshot.length === 0 && <li>snapshot is empty</li>}
           {snapshot.map((message) => (
-            <li key={message.id}>
+            <li key={message.id} className="truncate">
               {formatTime(message.completed_at)} · {message.role} ·{" "}
-              {(message.content ?? "").slice(0, 60)}
+              {(message.content ?? "").slice(0, 70)}
             </li>
           ))}
         </ul>
@@ -112,11 +156,22 @@ export default function ConversationPage({ params }: { params: { id: string } })
   const { messages, title, connected, loading, error, inFlight, send } =
     useConversation(params.id);
   const [draft, setDraft] = useState("");
+  const scroller = useRef<HTMLDivElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const [stick, setStick] = useState(true);
 
+  // Only follow the tail if the user is already at it. With several answers
+  // growing at once, yanking the viewport down on every chunk would make
+  // reading anything above impossible.
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (stick) bottom.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, stick]);
+
+  function onScroll() {
+    const el = scroller.current;
+    if (!el) return;
+    setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -125,11 +180,12 @@ export default function ConversationPage({ params }: { params: { id: string } })
     // Cleared before the request resolves, so the box is ready for the next
     // prompt immediately rather than after a round trip.
     setDraft("");
+    setStick(true);
     await send(content);
   }
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
+    <div className="flex h-[calc(100vh-8rem)] flex-col gap-3">
       <header className="flex items-baseline justify-between gap-4">
         <div>
           <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">
@@ -139,13 +195,23 @@ export default function ConversationPage({ params }: { params: { id: string } })
             {title ?? "Untitled conversation"}
           </h2>
         </div>
-        <span
-          className={`font-mono text-[11px] ${
-            connected ? "text-complete" : "text-failed"
-          }`}
-        >
-          {connected ? "socket connected" : "socket offline"}
-        </span>
+        <div className="flex items-center gap-3 font-mono text-[11px]">
+          <AnimatePresence>
+            {inFlight > 0 && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-streaming"
+              >
+                {inFlight} in flight
+              </motion.span>
+            )}
+          </AnimatePresence>
+          <span className={connected ? "text-complete" : "text-failed"}>
+            {connected ? "socket connected" : "socket offline"}
+          </span>
+        </div>
       </header>
 
       {error && (
@@ -154,16 +220,22 @@ export default function ConversationPage({ params }: { params: { id: string } })
         </p>
       )}
 
-      <div className="flex-1 overflow-y-auto rounded-lg border border-zinc-800 p-4">
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto rounded-lg border border-zinc-800 p-4"
+      >
         {loading ? (
           <p className="text-sm text-zinc-500">Loading…</p>
         ) : messages.length === 0 ? (
           <p className="text-sm text-zinc-500">No messages yet. Say something.</p>
         ) : (
           <ul className="space-y-3">
-            {messages.map((message) => (
-              <Bubble key={message.id} message={message} />
-            ))}
+            <AnimatePresence initial={false}>
+              {messages.map((message) => (
+                <Bubble key={message.id} message={message} />
+              ))}
+            </AnimatePresence>
           </ul>
         )}
         <div ref={bottom} />
@@ -190,9 +262,8 @@ export default function ConversationPage({ params }: { params: { id: string } })
       </form>
 
       <p className="text-xs text-zinc-600">
-        {inFlight > 0
-          ? `${inFlight} ${inFlight === 1 ? "answer is" : "answers are"} generating. Send another — the input never locks.`
-          : "The input never locks. Send a follow-up while an answer is still generating and both run at once."}
+        Bubbles sit in the order you asked, but each resolves on its own — a
+        later question can finish first without moving anything.
       </p>
 
       <SnapshotInspector conversationId={params.id} />
