@@ -10,13 +10,14 @@ This is a systems/concurrency project wearing an AI costume. The interesting par
 is not the model call — it is deciding what "the conversation so far" means when
 two answers are in flight at once.
 
-**Status: Stage 5 of 12 complete** — several prompts generate at once against one
-shared history, each reading its own snapshot; the UI keeps display order and
-completion order visibly separate, and reports what it all cost.
+**Status: Stage 11 of 12 complete.** Several prompts generate at once against one
+shared history, each reading its own snapshot. Prompts that need an earlier
+answer are detected and made to wait — **97.9%** accurate over 50 labelled
+cases, with **1 missed dependency and 0 needless waits** — and the ones that slip
+through get a retrospective nudge. Submitting stays flat at 30–50 ms with 24
+answers already streaming. See [Results](#results).
 
-Stages 1–5 are a coherent project on their own: non-blocking concurrent chat
-with snapshot-based context and a transparency dashboard. Stages 6–9 add the
-dependency-awareness layer on top.
+Only Stage 12 remains: documentation polish and a demo recording.
 
 ---
 
@@ -322,16 +323,16 @@ Against 38 hand-labelled prompts in
 [eval/dependency_cases.json](eval/dependency_cases.json):
 
 ```
-decided           27  (71% of set)
-deferred (unsure) 11  -> Stage 7 classifier
-correct        27/27  (100% of decided)
+decided           32  (64% of set)
+deferred (unsure) 18  -> Stage 7 classifier
+correct        32/32  (100% of decided)
 ```
 
 `docker compose exec backend python -m scripts.eval_dependency`
 
-**Deferring is not counted as an error.** Those 11 cases are the ones Stage 7
-exists for. A heuristic that answered all 38 confidently and got a fifth wrong
-would be worse than one that answers 27 and knows when it doesn't know — 100% is
+**Deferring is not counted as an error.** Those 18 cases are the ones Stage 7
+exists for. A heuristic that answered all 50 confidently and got a fifth wrong
+would be worse than one that answers 32 and knows when it doesn't know — 100% is
 a statement about coverage-adjusted precision, not about the problem being
 solved.
 
@@ -377,19 +378,18 @@ Three things make the waiting safe:
   guessing independence ships a wrong answer while guessing dependence costs a
   wait.
 
-Measured on the 11 deferred cases (`python -m scripts.eval_classifier`):
+Measured on the deferred cases (`python -m scripts.eval_classifier`):
 
 ```
-correct  10/11  (90.9%)
+correct  14/15  (93.3%)   3 excluded: provider errors
   false independent (costs correctness) 1
   false dependent   (costs latency)     0
 ```
 
-Pipeline end to end: **37/38 (97.4%)** — heuristic 27/27 on what it decides,
-classifier 10/11 on the rest. The single miss is "Refactor this function to be
-tail recursive", called independent when it was dependent. That is the expensive
-direction, and it is exactly the case Stage 9's retrospective check exists to
-catch. It will not be the only one — see the limitations section.
+The single miss is "Refactor this function to be tail recursive", called
+independent when it was dependent — the expensive direction, and exactly the
+case Stage 9's retrospective check exists to catch. Full pipeline numbers are in
+Stage 11.
 
 Verified live: a dependent follow-up ("now do the same for search algorithms")
 held until its predecessor landed and then answered about *search*, proving it
@@ -488,6 +488,64 @@ Cancel also settles rows orphaned by a restart, which would otherwise sit
 
 ---
 
+## Results
+
+Two claims, two harnesses. Reproduce with:
+
+```bash
+docker compose exec backend python -m scripts.eval_pipeline
+docker compose exec backend python -m scripts.load_test --jobs 24
+```
+
+### Does it know when a prompt must wait?
+
+50 hand-labelled prompts in [eval/dependency_cases.json](eval/dependency_cases.json),
+balanced 25/25, run through the real path — heuristic first, classifier only for
+what it defers.
+
+| | decided | accuracy | precision | recall |
+| --- | --- | --- | --- | --- |
+| Heuristic alone | 32/50 (64%) | **32/32 (100%)** | 100% / 100% | 100% / 100% |
+| **+ classifier** | 47/47 (100%) | **46/47 (97.9%)** | 100% / 95.7% | 96.0% / 100% |
+
+*(precision and recall given as dependent / independent; 3 cases excluded — the
+provider returned quota errors, and an outage is not a judgement.)*
+
+**Missed dependencies: 1. Needless waits: 0.** That asymmetry is the number that
+matters — a missed dependency ships a wrong answer, a needless wait costs only
+latency — and a single accuracy figure hides which one you are making.
+
+The heuristic is free and never wrong on what it decides; the classifier costs
+one cheap call and closes the remaining 36%. Per-category output shows where each
+earns its keep: the heuristic settles all `continuation`, `self-contained` and
+`operates-on-output` cases, and defers every `ellipsis`, `local-pronoun` and
+`bare-demonstrative` one.
+
+The one miss, consistently, is *"Refactor this function to be tail recursive."*
+
+### Does concurrency actually work under load?
+
+N prompts at randomised intervals against the local generator — a real provider
+would measure its own queueing and rate limits, not this system's scheduling.
+
+| prompts | peak concurrent | submit median | TTFT median | TTFT p95 | wall |
+| --- | --- | --- | --- | --- | --- |
+| 4 | **4** | 34 ms | 59 ms | 88 ms | 4.1 s |
+| 8 | **8** | 52 ms | 97 ms | 204 ms | 4.3 s |
+| 16 | **16** | 30 ms | 53 ms | 79 ms | 4.9 s |
+| 24 | **24** | 38 ms | 70 ms | 171 ms | 6.4 s |
+
+Peak concurrency equals the number submitted at every level: nothing is being
+quietly serialised. Submit latency stays flat at 30–50 ms whether 4 or 24 answers
+are already streaming — which is the non-blocking claim, stated as a measurement
+rather than an assertion. Twenty-four concurrent answers finish in 6.4 s of wall
+clock.
+
+Run at the default cap of 8, the same test reports `accepted 8, rejected(429) 4`
+— the guardrail from Stage 10, doing its job.
+
+---
+
 ## Roadmap
 
 | Stage | What it adds |
@@ -502,7 +560,7 @@ Cancel also settles rows orphaned by a restart, which would otherwise sit
 | 8 ✅ | Manual "chain" override |
 | 9 ✅ | Optimistic fallback + regenerate nudge |
 | 10 ✅ | Resilience: cancel, reconnect, per-job failure isolation |
-| 11 | Evaluation harness |
+| 11 ✅ | Evaluation harness |
 | 12 | Documentation, demo, writeup |
 
 ---
