@@ -20,11 +20,11 @@ datasource db {
 model Conversation {
   id        String   @id @default(cuid())
   title     String?
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   // @updatedAt alone is applied by the Prisma client, which leaves the column
   // NOT NULL with no database default — every non-Prisma writer would have to
   // remember it. @default(now()) gives it one.
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   messages Message[]
 
@@ -48,16 +48,21 @@ model Message {
   status String @default("pending")
 
   /// When the user hit send. Controls DISPLAY order.
-  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
 
   /// When generation finished. Controls COMMIT order — a row is only visible as
   /// context to jobs whose contextCutoff is after this timestamp.
-  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
 
   /// Snapshot taken when the job starts: only messages completed strictly before
   /// this instant are visible to it as context. This one column is the whole
   /// MVCC idea.
-  contextCutoff DateTime @map("context_cutoff") @db.Timestamptz(3)
+  ///
+  /// Microsecond precision is load-bearing, not incidental. A job's cutoff is
+  /// its own prompt's completedAt plus one microsecond, so that the strict `<`
+  /// comparison still admits that prompt. At Timestamptz(3) that offset rounds
+  /// away and the two instants collide.
+  contextCutoff DateTime @map("context_cutoff") @db.Timestamptz(6)
 
   /// "auto" | "chained" | "independent" — manual override (Stage 8).
   dependencyMode String @default("auto") @map("dependency_mode")

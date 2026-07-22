@@ -68,9 +68,12 @@ docker compose exec backend python -m scripts.check_schema
 Run it after every migration. It compares the mapped tables and columns against
 the live database and exits non-zero on drift.
 
-All `DateTime` columns are `timestamptz`. In a system whose correctness rests on
-comparing instants written by different concurrent tasks, a timestamp without a
-zone is a latent bug.
+All `DateTime` columns are `timestamptz(6)`. In a system whose correctness rests
+on comparing instants written by different concurrent tasks, a timestamp without
+a zone is a latent bug — and so is one without enough precision. The columns
+started at `timestamptz(3)`, which silently rounded away the one-microsecond
+offset that makes a job's cutoff admit its own prompt, colliding the two
+instants. Precision here is load-bearing, not cosmetic.
 
 ---
 
@@ -246,7 +249,10 @@ sort falls through to id and then role to stay total, so React never sees two
 rows swap places. `orderMessages` in
 [frontend/lib/ordering.ts](frontend/lib/ordering.ts) is a pure function for
 exactly this reason; it has unit tests covering the tie case, the late-answer
-case, and idempotency.
+case, and idempotency. The server applies the same rule in
+[backend/app/ordering.py](backend/app/ordering.py) — the client still sorts,
+because it holds rows straight from POST responses and frames that the server
+has not seen, but the API should not hand back an order that needs repairing.
 
 **Per-bubble state.** Each bubble carries its own `pending → streaming →
 complete` chip with a pulsing dot while unsettled, so several in-flight answers

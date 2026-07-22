@@ -8,6 +8,7 @@ from .. import jobs, redis_client
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..models import Conversation, Message, Role, Status, utcnow
+from ..ordering import order_for_display
 from ..schemas import (
     ConversationCreate,
     ConversationDetailOut,
@@ -58,13 +59,15 @@ async def get_conversation(
     conversation = await _load_conversation(session, conversation_id)
 
     # Display order is submitted_at — the order the user experienced, which is
-    # not the order these rows completed in.
+    # not the order these rows completed in. Sorted in Python rather than SQL
+    # because the key is the *exchange's* timestamp, which for an answer means
+    # its prompt's: see ordering.order_for_display.
     result = await session.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.submitted_at.asc())
     )
-    messages = list(result.scalars())
+    messages = order_for_display(list(result.scalars()))
 
     return ConversationDetailOut(
         id=conversation.id,
