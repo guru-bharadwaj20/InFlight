@@ -7,7 +7,7 @@ changes, mirror it here and run backend/scripts/check_schema.py.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .ids import new_id
@@ -49,16 +49,33 @@ class DependencyMode:
     INDEPENDENT = "independent"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    starred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+    user_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
 
+    user: Mapped["User | None"] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",

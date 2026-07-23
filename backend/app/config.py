@@ -18,6 +18,12 @@ class Settings(BaseSettings):
 
     max_concurrent_jobs_per_conversation: int = 8
 
+    # Signs the auth tokens. The default is fine for local development; set
+    # JWT_SECRET in .env for anything that leaves this machine, or every token
+    # is forgeable.
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_expire_hours: int = 24 * 7
+
     # Swaps in a deterministic local generator instead of calling Gemini. Off by
     # default and never inferred from a missing key — a silent fallback to fake
     # answers would be far worse than a visible error. It exists so the

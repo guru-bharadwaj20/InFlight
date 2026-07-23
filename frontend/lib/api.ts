@@ -4,8 +4,45 @@ export const API_BASE_URL =
 export const WS_BASE_URL =
   process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws";
 
-export const conversationSocketUrl = (conversationId: string) =>
-  `${WS_BASE_URL}/conversations/${conversationId}`;
+const TOKEN_KEY = "inflight-token";
+
+export const auth = {
+  get token(): string | null {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(TOKEN_KEY);
+  },
+  set(token: string) {
+    window.localStorage.setItem(TOKEN_KEY, token);
+  },
+  clear() {
+    window.localStorage.removeItem(TOKEN_KEY);
+  },
+};
+
+// A browser cannot attach an Authorization header to a WebSocket, so the token
+// rides along as a query parameter; the server validates it before accepting.
+export const conversationSocketUrl = (conversationId: string) => {
+  const token = auth.token ?? "";
+  return `${WS_BASE_URL}/conversations/${conversationId}?token=${encodeURIComponent(token)}`;
+};
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface AuthResult {
+  token: string;
+  user: User;
+}
+
+/** Thrown on a 401 so callers (and the shell) can react to a dead session. */
+export class Unauthorized extends Error {
+  constructor() {
+    super("unauthorized");
+  }
+}
 
 export type MessageStatus =
   | "pending"
@@ -46,6 +83,7 @@ export interface Message {
 export interface Conversation {
   id: string;
   title: string | null;
+  starred: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -121,22 +159,63 @@ export type Frame =
     };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = auth.token;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
+
+  if (response.status === 401) {
+    // The token is gone or expired. Drop it so the shell routes to /login
+    // rather than looping on failed authed calls.
+    auth.clear();
+    throw new Unauthorized();
+  }
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw new Error(await friendlyError(response.status, body));
   }
 
+  // 204 No Content (delete) has no body to parse.
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+/** Pull FastAPI's `detail` out of the error envelope; fall back to the raw body. */
+async function friendlyError(statusCode: number, body: string): Promise<string> {
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed.detail === "string") return parsed.detail;
+    if (Array.isArray(parsed.detail) && parsed.detail[0]?.msg)
+      return parsed.detail[0].msg;
+  } catch {
+    /* not JSON */
+  }
+  return body || `request failed (${statusCode})`;
 }
 
 export const api = {
   health: () => request<Health>("/health"),
+
+  signup: (name: string, email: string, password: string) =>
+    request<AuthResult>("/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ name, email, password }),
+    }),
+
+  login: (email: string, password: string) =>
+    request<AuthResult>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+
+  me: () => request<User>("/auth/me"),
 
   /** Rates only — the client already holds the token counts to apply them to. */
   pricing: () => request<Pricing>("/pricing"),
@@ -151,6 +230,19 @@ export const api = {
 
   getConversation: (id: string) =>
     request<ConversationDetail>(`/conversations/${id}`),
+
+  /** Rename or (un)star a chat. */
+  updateConversation: (
+    id: string,
+    changes: { title?: string; starred?: boolean }
+  ) =>
+    request<Conversation>(`/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(changes),
+    }),
+
+  deleteConversation: (id: string) =>
+    request<void>(`/conversations/${id}`, { method: "DELETE" }),
 
   /**
    * Returns as soon as the rows exist — it does not wait for the model.

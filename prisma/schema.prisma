@@ -17,17 +17,37 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversations Conversation[]
+
+  @@map("users")
+}
+
 model Conversation {
   id        String   @id @default(cuid())
   title     String?
+  // Whether the user has pinned this chat (Stage: sidebar star affordance).
+  starred   Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   // @updatedAt alone is applied by the Prisma client, which leaves the column
   // NOT NULL with no database default — every non-Prisma writer would have to
   // remember it. @default(now()) gives it one.
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Nullable so pre-auth rows survive the migration; new chats always set it,
+  // and the listing filters by the signed-in user.
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   messages Message[]
 
+  @@index([userId, createdAt])
   @@map("conversations")
 }
 

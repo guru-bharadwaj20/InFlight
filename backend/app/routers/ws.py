@@ -11,6 +11,9 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .. import redis_client
+from ..db import session_factory
+from ..models import Conversation
+from ..security import decode_token
 
 router = APIRouter(tags=["ws"])
 
@@ -56,7 +59,24 @@ async def _watch_for_disconnect(websocket: WebSocket) -> None:
 
 
 @router.websocket("/ws/conversations/{conversation_id}")
-async def conversation_socket(websocket: WebSocket, conversation_id: str) -> None:
+async def conversation_socket(
+    websocket: WebSocket, conversation_id: str, token: str = ""
+) -> None:
+    # A browser cannot set an Authorization header on a WebSocket, so the token
+    # arrives as a query parameter, and the connection is only accepted for the
+    # conversation's owner. The socket is read-only — it forwards frames the
+    # HTTP side already authorised — but gating it still keeps one user from
+    # subscribing to another's stream.
+    user_id = decode_token(token)
+    if not user_id:
+        await websocket.close(code=4401)
+        return
+    async with session_factory()() as session:
+        conversation = await session.get(Conversation, conversation_id)
+        if conversation is None or conversation.user_id != user_id:
+            await websocket.close(code=4404)
+            return
+
     await websocket.accept()
 
     tasks = [

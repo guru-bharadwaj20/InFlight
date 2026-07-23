@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
+import { AuthProvider } from "@/lib/useAuth";
 import { ThemeProvider, noFlashScript } from "@/components/theme";
 import "./globals.css";
 
@@ -18,10 +19,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <main className="relative min-w-0 flex-1 overflow-hidden">{children}</main>
-          </div>
+          <AuthProvider>
+            <AppShell>{children}</AppShell>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

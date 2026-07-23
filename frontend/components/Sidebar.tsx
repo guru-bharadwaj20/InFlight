@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { api, type Conversation, type Health } from "@/lib/api";
+import { api, type Conversation } from "@/lib/api";
+import { useAuth } from "@/lib/useAuth";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./theme";
 
@@ -45,13 +46,10 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [health, setHealth] = useState<Health | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [list, h] = await Promise.all([api.listConversations(), api.health()]);
-      setConversations(list.slice(0, 12));
-      setHealth(h);
+      setConversations(await api.listConversations());
     } catch {
       /* the page itself surfaces backend errors; the rail stays quiet */
     }
@@ -113,16 +111,59 @@ export function Sidebar() {
         )}
       </div>
 
-      <div className="border-t border-edge px-4 py-3">
-        <div className="flex items-center gap-2 text-xs text-ink-faint">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              health?.status === "ok" ? "bg-complete" : "bg-failed"
-            }`}
-          />
-          {health ? health.generation_model : "connecting…"}
-        </div>
-      </div>
+      <UserFooter />
     </aside>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
+}
+
+/** Bottom-left profile — name and avatar only, no plan or billing. */
+function UserFooter() {
+  const { user, logout } = useAuth();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+
+  if (!user) return null;
+
+  return (
+    <div className="relative border-t border-edge p-2">
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-2 z-20 mb-1 w-52 overflow-hidden rounded-xl border border-edge bg-surface py-1 shadow-composer">
+            <button
+              onClick={() => {
+                setOpen(false);
+                logout();
+                router.replace("/login");
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-failed hover:bg-surface-2"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
+                <path d="M13 14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1M9 10h8m0 0-2.5-2.5M17 10l-2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Log out
+            </button>
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+      >
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-flight to-ember text-xs font-semibold text-white">
+          {initials(user.name)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-ink">{user.name}</span>
+          <span className="block truncate text-xs text-ink-faint">{user.email}</span>
+        </span>
+      </button>
+    </div>
   );
 }

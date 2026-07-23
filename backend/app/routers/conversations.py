@@ -5,15 +5,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import dependency, jobs, redis_client
+from ..auth import current_user
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..ids import new_id
-from ..models import Conversation, DependencyMode, Message, Role, Status, utcnow
+from ..models import Conversation, DependencyMode, Message, Role, Status, User, utcnow
 from ..ordering import order_for_display
 from ..schemas import (
     ConversationCreate,
     ConversationDetailOut,
     ConversationOut,
+    ConversationUpdate,
     MessageOut,
     PromptAccepted,
     PromptCreate,
@@ -22,9 +24,13 @@ from ..schemas import (
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
-async def _load_conversation(session: AsyncSession, conversation_id: str) -> Conversation:
+async def _load_conversation(
+    session: AsyncSession, conversation_id: str, user: User
+) -> Conversation:
     conversation = await session.get(Conversation, conversation_id)
-    if conversation is None:
+    # A conversation owned by someone else is reported as missing, not
+    # forbidden: 403 would confirm the id exists to a user who should not know.
+    if conversation is None or conversation.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "conversation not found")
     return conversation
 
@@ -33,8 +39,9 @@ async def _load_conversation(session: AsyncSession, conversation_id: str) -> Con
 async def create_conversation(
     payload: ConversationCreate,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> Conversation:
-    conversation = Conversation(title=payload.title)
+    conversation = Conversation(title=payload.title, user_id=user.id)
     session.add(conversation)
     await session.commit()
     await session.refresh(conversation)
@@ -45,19 +52,59 @@ async def create_conversation(
 async def list_conversations(
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> list[Conversation]:
     result = await session.execute(
-        select(Conversation).order_by(Conversation.created_at.desc()).limit(limit)
+        select(Conversation)
+        .where(Conversation.user_id == user.id)
+        # Pinned chats first, then most recent — the order the sidebar renders.
+        .order_by(Conversation.starred.desc(), Conversation.created_at.desc())
+        .limit(limit)
     )
     return list(result.scalars())
+
+
+@router.patch("/{conversation_id}", response_model=ConversationOut)
+async def update_conversation(
+    conversation_id: str,
+    payload: ConversationUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> Conversation:
+    """Rename or (un)star a chat — the sidebar's per-chat actions."""
+    conversation = await _load_conversation(session, conversation_id, user)
+    if payload.title is not None:
+        conversation.title = payload.title.strip() or None
+    if payload.starred is not None:
+        conversation.starred = payload.starred
+    await session.commit()
+    await session.refresh(conversation)
+    return conversation
+
+
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> None:
+    conversation = await _load_conversation(session, conversation_id, user)
+    # Cancel anything still generating so no task keeps writing to a Redis key
+    # for a conversation that no longer exists.
+    for job_id in await redis_client.active_jobs(conversation_id):
+        await jobs.cancel(job_id)
+        await redis_client.clear_job(job_id, conversation_id)
+    await session.delete(conversation)  # messages cascade via the FK
+    await session.commit()
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetailOut)
 async def get_conversation(
     conversation_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> ConversationDetailOut:
-    conversation = await _load_conversation(session, conversation_id)
+    conversation = await _load_conversation(session, conversation_id, user)
 
     # Display order is submitted_at — the order the user experienced, which is
     # not the order these rows completed in. Sorted in Python rather than SQL
@@ -73,6 +120,7 @@ async def get_conversation(
     return ConversationDetailOut(
         id=conversation.id,
         title=conversation.title,
+        starred=conversation.starred,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         messages=[MessageOut.model_validate(m) for m in messages],
@@ -89,6 +137,7 @@ async def send_prompt(
     payload: PromptCreate,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    user: User = Depends(current_user),
 ) -> PromptAccepted:
     """Commit the prompt, then hand its answer to a background job.
 
@@ -98,7 +147,7 @@ async def send_prompt(
     server is already willing to accept the next prompt immediately, and Stage 3
     removes the lock without touching this handler.
     """
-    await _load_conversation(session, conversation_id)
+    await _load_conversation(session, conversation_id, user)
 
     if payload.parent_message_id:
         parent = await session.get(Message, payload.parent_message_id)
@@ -221,7 +270,7 @@ async def regenerate(
 
     User-initiated only. The retrospective check suggests; it never re-runs.
     """
-    await _load_conversation(session, conversation_id)
+    await _load_conversation(session, conversation_id, user)
 
     message = await session.get(Message, message_id)
     if message is None or message.conversation_id != conversation_id:
@@ -271,7 +320,7 @@ async def cancel_message(
     Cancelling is per job by construction — sibling jobs share nothing but the
     conversation, so stopping one cannot disturb the others.
     """
-    await _load_conversation(session, conversation_id)
+    await _load_conversation(session, conversation_id, user)
 
     message = await session.get(Message, message_id)
     if message is None or message.conversation_id != conversation_id:
@@ -320,7 +369,7 @@ async def get_context_snapshot(
     they were submitted. A prompt submitted earlier but still streaming is
     correctly absent.
     """
-    await _load_conversation(session, conversation_id)
+    await _load_conversation(session, conversation_id, user)
     cutoff = at or datetime.now(timezone.utc)
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=timezone.utc)
