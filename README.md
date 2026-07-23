@@ -87,6 +87,12 @@ docker compose exec backend python -m scripts.load_test --jobs 24  # does it hol
 docker compose exec backend python -m scripts.chaos_test        # does it survive faults?
 ```
 
+All of these run in CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) on
+every push — the concurrency checker, the dependency baselines on both case sets,
+the chaos and event-replay harnesses, and a schema-drift check against a real
+Postgres and Redis, plus the frontend typecheck and production build — so these
+claims are enforced continuously, not just asserted here.
+
 **Is the concurrency correct?** A randomised interleaving checker simulates
 thousands of schedules of concurrent prompts against a virtual microsecond clock,
 and asserts the invariants the design rests on — snapshot isolation (no job reads
