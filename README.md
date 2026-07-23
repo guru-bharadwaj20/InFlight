@@ -84,6 +84,7 @@ Three claims, three harnesses:
 docker compose exec backend python -m scripts.concurrency_sim   # is it correct?
 docker compose exec backend python -m scripts.eval_pipeline     # does it know when to wait?
 docker compose exec backend python -m scripts.load_test --jobs 24  # does it hold under load?
+docker compose exec backend python -m scripts.chaos_test        # does it survive faults?
 ```
 
 **Is the concurrency correct?** A randomised interleaving checker simulates
