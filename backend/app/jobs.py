@@ -19,7 +19,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import dependency, redis_client, scheduler, telemetry
+from . import dependency, events, redis_client, scheduler, telemetry
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
@@ -158,6 +158,7 @@ async def restart_job(
     message.dependency_source = Source.HEURISTIC
     message.dependency_reason = reason
     await session.commit()
+    await events.append(conversation_id, events.REGENERATED, message.id, reason=reason)
 
     await redis_client.set_job_state(
         message.id, status=Status.PENDING, conversation_id=conversation_id, seq=0
@@ -490,6 +491,11 @@ async def review_stale_context(session: AsyncSession, conversation_id: str) -> N
 
     await session.commit()
     for message in flagged:
+        await events.append(
+            conversation_id, events.STALE_FLAGGED, message.id,
+            reason=message.stale_context_reason,
+            source_id=message.stale_context_source_id,
+        )
         await redis_client.publish(
             conversation_id,
             message.id,
@@ -529,6 +535,18 @@ async def _finish(
         job.model = model
 
     await session.commit()
+
+    # Append the terminal event to the append-only log before the frame goes out.
+    if status == Status.COMPLETE:
+        await events.append(
+            conversation_id, events.COMPLETED, job.id,
+            content=content, prompt_tokens=job.prompt_tokens,
+            completion_tokens=job.completion_tokens,
+        )
+    elif status == Status.CANCELLED:
+        await events.append(conversation_id, events.CANCELLED, job.id, content=content)
+    else:
+        await events.append(conversation_id, events.FAILED, job.id, error=error)
 
     await redis_client.publish(
         conversation_id,
@@ -573,6 +591,10 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 await _resolve_dependency(session, job, conversation_id)
             trace.note(job.detected_dependency, job.dependency_source)
             telemetry.record_verdict(job.detected_dependency, job.dependency_source)
+            await events.append(
+                conversation_id, events.RESOLVED, job_id,
+                verdict=job.detected_dependency, source=job.dependency_source,
+            )
 
             with trace.span("context"):
                 turns = await build_context(session, job)
@@ -596,6 +618,7 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             try:
                 job.status = Status.STREAMING
                 await session.commit()
+                await events.append(conversation_id, events.STREAMING, job_id)
                 await redis_client.set_job_state(job_id, status=Status.STREAMING)
                 await redis_client.publish(
                     conversation_id, job_id, {"type": "status", "status": Status.STREAMING}

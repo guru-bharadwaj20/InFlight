@@ -156,6 +156,10 @@ assertion.
 - **Observability** — Prometheus metrics at `/metrics` (job outcomes, dependency
   verdicts, wait/TTFT/generation latency histograms, live concurrency) and a
   per-job trace ring buffer at `/traces` for walking one generation's lifecycle.
+- **Event sourcing** — every job transition is appended to a per-conversation
+  Redis Stream; the `messages` table is a projection of that append-only log
+  (`GET /conversations/{id}/events` returns both), enabling audit and time-travel
+  replay. `scripts.event_replay` asserts the projection equals the row.
 - **Resilient streaming** — a formalized at-least-once protocol with per-job
   sequence numbers, client-side dedup, and gap-healing resync, so a dropped or
   duplicated frame never renders as a hole. See

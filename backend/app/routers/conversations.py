@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import dependency, jobs, redis_client, telemetry
+from .. import dependency, events, jobs, redis_client, telemetry
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..db import get_session
@@ -252,6 +252,10 @@ async def send_prompt(
         )
     jobs.spawn(job_id, conversation_id)
     telemetry.PROMPTS_SUBMITTED.inc()
+    await events.append(
+        conversation_id, events.SUBMITTED, job_id,
+        model=assistant_message.model, verdict=verdict, source=source,
+    )
 
     return PromptAccepted(
         user_message=MessageOut.model_validate(user_message),
@@ -419,6 +423,24 @@ async def stream_state(
         seq=0,
         final=message.status in Status.TERMINAL,
     )
+
+
+@router.get("/{conversation_id}/events")
+async def conversation_events(
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> dict:
+    """The append-only event log for this conversation, oldest first.
+
+    Every job lifecycle transition is here as an immutable event. `projected` is
+    the read model rebuilt purely from those events — it exists to show the
+    `messages` table is a projection of this log, not an independent source of
+    truth.
+    """
+    await _load_conversation(session, conversation_id, user)
+    log = await events.read(conversation_id)
+    return {"count": len(log), "events": log, "projected": events.project(log)}
 
 
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])
