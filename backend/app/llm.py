@@ -32,7 +32,7 @@ class LLMNotConfigured(RuntimeError):
     """Raised when no API key is set, so the job can report it as a normal error."""
 
 
-def describe_error(exc: BaseException) -> str:
+def describe_error(exc: BaseException, model: str | None = None) -> str:
     """Turn a provider exception into something worth showing in a chat bubble.
 
     The SDK raises with the whole error envelope embedded in the message —
@@ -42,9 +42,12 @@ def describe_error(exc: BaseException) -> str:
     truncated, rather than being swallowed.
     """
     text = str(exc)
+    # The job's own model, not the configured one: a regenerated row can still
+    # carry the model it was first created with, and naming the wrong one sends
+    # the reader to the wrong setting.
+    model = model or get_settings().generation_model
 
     if "RESOURCE_EXHAUSTED" in text or "429" in text:
-        model = get_settings().generation_model
         return (
             f"Rate limit reached for {model}. The free tier allows only a small "
             "number of requests per day, per model. Wait for the quota to reset, "
@@ -57,8 +60,8 @@ def describe_error(exc: BaseException) -> str:
         return "The API key was rejected. Check GEMINI_API_KEY in .env."
     if "NOT_FOUND" in text or "404" in text:
         return (
-            f"Model '{get_settings().generation_model}' was not found. Check "
-            "GENERATION_MODEL names a model your key can reach."
+            f"Model '{model}' was not found. Check GENERATION_MODEL names a "
+            "model your key can reach."
         )
     if "SAFETY" in text or "blocked" in text.lower():
         return "The provider blocked this response under its safety filters."

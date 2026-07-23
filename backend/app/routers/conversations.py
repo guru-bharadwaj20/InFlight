@@ -285,7 +285,7 @@ async def cancel_message(
         message.status = Status.CANCELLED
         message.error = "cancelled"
         await session.commit()
-        await redis_client.unregister_active_job(conversation_id, message_id)
+        await redis_client.clear_job(message_id, conversation_id)
         await redis_client.publish(
             conversation_id,
             message_id,

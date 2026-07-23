@@ -34,17 +34,47 @@ def rate(numerator: int, denominator: int) -> str:
     return f"{numerator / denominator:6.1%}" if denominator else "     —"
 
 
-async def resolve(case: dict, heuristic_only: bool) -> tuple[str, str, str | None]:
+# Firing every deferred case at once rate-limits the harness against itself, so
+# cases drop out as "provider errors" that are really self-inflicted. The run is
+# not a latency benchmark, so bounding it costs nothing and makes the score
+# reproducible.
+CONCURRENCY = 2
+
+# A rate-limit rejection is not a judgement, and dropping those cases leaves the
+# score computed over a shifting subset — a different two each run. Retrying the
+# transient ones is what makes the tally reproducible. Only 429s are retried;
+# a genuine error still surfaces rather than being papered over.
+RETRIES = 4
+
+
+async def classify_with_retry(case: dict) -> bool:
+    delay = 4.0
+    for attempt in range(RETRIES):
+        try:
+            return await classify_dependency_strict(case["prompt"], in_flight(case))
+        except Exception as exc:
+            transient = "RESOURCE_EXHAUSTED" in str(exc) or "429" in str(exc)
+            if not transient or attempt == RETRIES - 1:
+                raise
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise RuntimeError("unreachable")
+
+
+async def resolve(
+    case: dict, heuristic_only: bool, gate: asyncio.Semaphore
+) -> tuple[str, str, str | None]:
     """Return (verdict, source, error) exactly as the running system would."""
     detection = evaluate(case["prompt"])
     if detection.verdict != Verdict.UNSURE:
         return detection.verdict, "heuristic", None
     if heuristic_only:
         return Verdict.UNSURE, "heuristic", None
-    try:
-        depends = await classify_dependency_strict(case["prompt"], in_flight(case))
-    except Exception as exc:
-        return Verdict.UNSURE, "classifier", type(exc).__name__
+    async with gate:
+        try:
+            depends = await classify_with_retry(case)
+        except Exception as exc:
+            return Verdict.UNSURE, "classifier", type(exc).__name__
     return (Verdict.DEPENDENT if depends else Verdict.INDEPENDENT), "classifier", None
 
 
@@ -55,7 +85,10 @@ async def main() -> int:
     args = parser.parse_args()
 
     cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
-    results = await asyncio.gather(*[resolve(c, args.heuristic_only) for c in cases])
+    gate = asyncio.Semaphore(CONCURRENCY)
+    results = await asyncio.gather(
+        *[resolve(c, args.heuristic_only, gate) for c in cases]
+    )
 
     errors = [(c, e) for c, (_, _, e) in zip(cases, results) if e]
     scored = [(c, v, s) for c, (v, s, e) in zip(cases, results) if not e]

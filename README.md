@@ -15,7 +15,7 @@ two answers are in flight at once.
 
 **Complete — all 12 stages.** Several prompts generate at once against one shared
 history, each reading its own snapshot. Prompts that need an earlier answer are
-detected and made to wait — **47/47** on 50 labelled cases, **0 missed
+detected and made to wait — **50/50** on 50 labelled cases, **0 missed
 dependencies, 0 needless waits** — and anything that slips through gets a
 retrospective nudge with a one-click re-run. Submitting stays flat at 30–50 ms
 with 24 answers already streaming.
@@ -119,7 +119,7 @@ what it defers.
 | | decided | accuracy |
 | --- | --- | --- |
 | Heuristic alone | 32/50 (64%) | **32/32 (100%)** |
-| **+ classifier** | 47/47 (100%) | **47/47 (100%)** |
+| **+ classifier** | 50/50 (100%) | **50/50 (100%)** |
 
 **Missed dependencies: 0. Needless waits: 0.** That asymmetry is the number that
 matters — a missed dependency ships a wrong answer, a needless wait costs only
@@ -131,11 +131,9 @@ earns its keep: the heuristic settles all `continuation`, `self-contained` and
 `operates-on-output` cases, and defers every `ellipsis`, `local-pronoun` and
 `bare-demonstrative` one.
 
-**Read this number with two caveats.** Three cases could not be scored — the
-free-tier quota returned errors, and an outage is not a judgement, so they are
-excluded rather than counted. And 50 self-authored cases is a small set written
-by the same person who wrote the detector: it is enough to catch regressions and
-to show the shape of the failures, not enough to claim a true error rate. The
+**Read this number with a caveat.** 50 self-authored cases is a small set
+written by the same person who wrote the detector: enough to catch regressions
+and show the shape of the failures, not enough to claim a true error rate. The
 honest reading is "no *known* failure mode is unhandled", not "this does not
 fail".
 

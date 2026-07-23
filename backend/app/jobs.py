@@ -396,7 +396,12 @@ async def _finish(
             "model": job.model,
         },
     )
-    await redis_client.unregister_active_job(conversation_id, job.id)
+    # Drop the whole job record, not just its membership of the active set. The
+    # replay buffer is only reachable through that set, so once the job leaves
+    # it the buffer is unreadable and would otherwise sit in Redis until its TTL
+    # expired. The terminal frame above already carried the final content, and
+    # the row is committed, so nothing still needs it.
+    await redis_client.clear_job(job.id, conversation_id)
 
 
 async def run_job(job_id: str, conversation_id: str) -> None:
@@ -478,7 +483,7 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 job,
                 conversation_id,
                 status=Status.ERROR,
-                error=describe_error(exc),
+                error=describe_error(exc, model),
                 usage=usage,
             )
 
