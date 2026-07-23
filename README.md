@@ -133,6 +133,10 @@ assertion.
 - **Dependency handling** — prompts needing an earlier answer are detected and made
   to wait; a manual `↩ chain` forces the wait with no prediction; a retrospective
   nudge catches misses with one-click regenerate.
+- **Speculative execution (optional)** — with `SPECULATIVE_EXECUTION=true` a
+  dependent prompt generates immediately instead of blocking, and rolls back to a
+  fresh-snapshot re-run only if the retrospective check confirms it missed
+  context: pessimistic waiting becomes optimistic concurrency with rollback.
 - **Accounts** — signup/login (bcrypt + JWT), per-user conversation isolation.
 - **Model picker** — any Gemini chat model the API key can use, queried live.
 - **Attachments** — images, camera capture, and public GitHub file contents.

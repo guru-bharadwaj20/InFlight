@@ -49,11 +49,22 @@ WORKER_ID = new_id()
 
 _control_task: asyncio.Task | None = None
 
+# Speculative jobs and whether they have already been rolled back once, so a
+# speculation is re-run at most a single time. Tracked in-process because the
+# job's own task performs the retry, in the same worker that ran it.
+_speculated: dict[str, bool] = {}
+
 
 def spawn(job_id: str, conversation_id: str) -> asyncio.Task:
     task = asyncio.create_task(run_job(job_id, conversation_id), name=f"job:{job_id}")
     _running[job_id] = task
-    task.add_done_callback(lambda _: _running.pop(job_id, None))
+    # Only clear the registry entry if it still points at *this* task. A restart
+    # (regenerate or a speculative rollback) replaces the entry with a new task
+    # before the old one finishes; without this guard the old task's completion
+    # would evict the new task and make it uncancellable.
+    task.add_done_callback(
+        lambda t: _running.pop(job_id, None) if _running.get(job_id) is t else None
+    )
     return task
 
 
@@ -118,6 +129,51 @@ async def stop_control_listener() -> None:
         except asyncio.CancelledError:
             pass
         _control_task = None
+
+
+async def restart_job(
+    session: AsyncSession,
+    message: Message,
+    conversation_id: str,
+    *,
+    reason: str,
+) -> None:
+    """Reset an answer row to pending against a fresh snapshot and re-run it.
+
+    The abort/retry half of optimistic concurrency, shared by the user-initiated
+    regenerate endpoint and the automatic speculative rollback. Re-stamping the
+    cutoff to now is the whole fix — the prompt is unchanged, but everything that
+    has committed since is inside the new snapshot.
+    """
+    message.status = Status.PENDING
+    message.content = None
+    message.error = None
+    message.completed_at = None
+    message.prompt_tokens = None
+    message.completion_tokens = None
+    message.context_cutoff = utcnow()
+    message.stale_context_reason = None
+    message.stale_context_source_id = None
+    message.detected_dependency = Verdict.INDEPENDENT
+    message.dependency_source = Source.HEURISTIC
+    message.dependency_reason = reason
+    await session.commit()
+
+    await redis_client.set_job_state(
+        message.id, status=Status.PENDING, conversation_id=conversation_id, seq=0
+    )
+    await redis_client.clear_buffer(message.id)
+    await redis_client.register_active_job(conversation_id, message.id)
+    spawn(message.id, conversation_id)
+
+
+async def _deferred_restart(job_id: str, conversation_id: str, reason: str) -> None:
+    """Re-run a job from its own new task, so the finishing job's task never
+    clobbers the restarted one. Owns its session, like any job step."""
+    async with session_factory()() as session:
+        message = await session.get(Message, job_id)
+        if message is not None:
+            await restart_job(session, message, conversation_id, reason=reason)
 
 
 async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
@@ -322,6 +378,30 @@ async def _resolve_dependency(
         )
 
     if verdict != Verdict.DEPENDENT:
+        return
+
+    if settings.speculative_execution and job.dependency_mode == DependencyMode.AUTO:
+        # Optimistic path: do not block. Proceed on the current snapshot and let
+        # the retrospective check decide, after the fact, whether skipping the
+        # wait cost real context. Marked INDEPENDENT so that check (which skips
+        # jobs that waited) still considers this one; `_speculated` remembers the
+        # truth so the outcome can be counted and rolled back at most once.
+        _speculated[job.id] = False
+        job.detected_dependency = Verdict.INDEPENDENT
+        job.dependency_source = Source.HEURISTIC
+        job.dependency_reason = "speculated: detection said dependent, proceeding optimistically"
+        await session.commit()
+        telemetry.SPECULATIONS.inc()
+        await redis_client.publish(
+            conversation_id,
+            job.id,
+            {
+                "type": "dependency",
+                "detected_dependency": job.detected_dependency,
+                "dependency_source": job.dependency_source,
+                "dependency_reason": job.dependency_reason,
+            },
+        )
         return
 
     loop = asyncio.get_running_loop()
@@ -556,6 +636,27 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             except Exception:
                 logger.exception("stale-context review failed for %s", conversation_id)
 
+            # Resolve a speculation: if the retrospective check flagged this job,
+            # the optimistic bet lost — roll back and re-run once against the
+            # fuller snapshot. Otherwise the wait was correctly skipped.
+            if job_id in _speculated:
+                flagged = await session.execute(
+                    select(Message.stale_context_reason).where(Message.id == job_id)
+                )
+                if flagged.scalar_one_or_none():
+                    telemetry.SPECULATION_OUTCOME.labels(outcome="rolled_back").inc()
+                    # From a detached task, so this finishing task cannot clobber
+                    # the restarted one (the done-callback guard also protects it).
+                    asyncio.create_task(
+                        _deferred_restart(
+                            job_id,
+                            conversation_id,
+                            "speculation rolled back: re-run with fuller context",
+                        )
+                    )
+                else:
+                    telemetry.SPECULATION_OUTCOME.labels(outcome="kept").inc()
+
         except asyncio.CancelledError:
             # Keep whatever was generated before the cancel — it is what the user
             # saw on screen, and discarding it would make the bubble jump.
@@ -595,6 +696,9 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             telemetry.JOBS_TOTAL.labels(outcome="error").inc()
         finally:
             telemetry.JOBS_ACTIVE.dec()
+            # The re-run (if any) is INDEPENDENT, so dropping the flag here caps
+            # speculative rollback at exactly one and prevents the map growing.
+            _speculated.pop(job_id, None)
 
 
 __all__ = [

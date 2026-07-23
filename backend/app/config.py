@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     max_dependency_wait_seconds: int = 120
     dependency_poll_interval_ms: int = 150
 
+    # Speculative execution (optimistic concurrency). When on, an auto-detected
+    # *dependent* prompt does not block: it generates immediately against the
+    # current snapshot, and only if the retrospective check later confirms it
+    # missed context does it abort and re-run once against the fuller snapshot.
+    # The latency win is every speculation that turns out not to conflict.
+    # Explicit chains still wait — the user asked for that ordering by hand.
+    # Off by default: auto-rerunning costs a second model call.
+    speculative_execution: bool = False
+
     cors_origins: str = "http://localhost:3000"
 
     @property

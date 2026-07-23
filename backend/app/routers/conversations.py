@@ -290,29 +290,12 @@ async def regenerate(
     if message.status not in Status.TERMINAL:
         raise HTTPException(status.HTTP_409_CONFLICT, "this answer is still generating")
 
-    message.status = Status.PENDING
-    message.content = None
-    message.error = None
-    message.completed_at = None
-    message.prompt_tokens = None
-    message.completion_tokens = None
-    message.context_cutoff = utcnow()
-    # The nudge has been acted on, so it should not survive the re-run.
-    message.stale_context_reason = None
-    message.stale_context_source_id = None
-    # Detection ran against a world that no longer exists; on a fresh snapshot
-    # there is nothing in flight to depend on.
-    message.detected_dependency = dependency.Verdict.INDEPENDENT
-    message.dependency_source = dependency.Source.HEURISTIC
-    message.dependency_reason = "regenerated against a fresh snapshot"
-    await session.commit()
-
-    await redis_client.set_job_state(
-        message.id, status=Status.PENDING, conversation_id=conversation_id, seq=0
+    await jobs.restart_job(
+        session,
+        message,
+        conversation_id,
+        reason="regenerated against a fresh snapshot",
     )
-    await redis_client.clear_buffer(message.id)
-    await redis_client.register_active_job(conversation_id, message.id)
-    jobs.spawn(message.id, conversation_id)
     return message
 
 

@@ -46,6 +46,15 @@ CLASSIFIER_CALLS = Counter(
     "inflight_classifier_calls_total",
     "Calls to the dependency classifier (the unsure cases only)",
 )
+SPECULATIONS = Counter(
+    "inflight_speculations_total",
+    "Dependent jobs that proceeded without waiting (speculative execution)",
+)
+SPECULATION_OUTCOME = Counter(
+    "inflight_speculation_outcome_total",
+    "How a speculation resolved: kept (no conflict) or rolled back (auto-rerun)",
+    ["outcome"],
+)
 JOBS_ACTIVE = Gauge(
     "inflight_jobs_active", "Generation jobs currently running in this worker"
 )
