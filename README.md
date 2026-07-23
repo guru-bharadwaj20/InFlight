@@ -110,6 +110,15 @@ dependency ships a wrong answer; a needless wait costs only latency. These are 5
 self-authored cases, so the honest reading is "no *known* failure mode is
 unhandled", not a true error rate.
 
+**Does it beat the trivial strategies?** `scripts.eval_baselines` scores the
+pipeline against always-wait, never-wait, and heuristic-only, reporting
+precision/recall/F1 and classifier-call cost for each — the pipeline reaches
+near-perfect F1 for a fraction of the calls of classifying everything. A second,
+deliberately adversarial case set (`--cases adversarial`: pointer-looking
+independent prompts and cue-less dependent ones) is where the free heuristic
+alone drops to ~29% F1, showing exactly which cases the classifier earns its keep
+on.
+
 **Does concurrency hold under load?** N prompts at randomised intervals against
 the local generator.
 
