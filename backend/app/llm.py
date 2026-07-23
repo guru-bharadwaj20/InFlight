@@ -16,10 +16,30 @@ from functools import lru_cache
 from google import genai
 from google.genai import types
 
+from . import resilience, telemetry
 from .config import get_settings
 from .models import Role
+from .resilience import CircuitBreaker, CircuitOpen
 
 logger = logging.getLogger(__name__)
+
+# One breaker guards every provider call in this worker. Its state feeds the
+# CIRCUIT_STATE gauge so an open circuit is visible in /metrics.
+_STATE_CODE = {"closed": 0, "half_open": 1, "open": 2}
+
+
+@lru_cache
+def _breaker() -> CircuitBreaker:
+    s = get_settings()
+    cb = CircuitBreaker(s.circuit_breaker_threshold, s.circuit_breaker_cooldown_seconds)
+
+    def _reflect(state) -> None:
+        telemetry.CIRCUIT_STATE.set(_STATE_CODE.get(state.value, 0))
+        if state.value == "open":
+            telemetry.CIRCUIT_TRIPS.inc()
+
+    cb.on_state_change = _reflect
+    return cb
 
 SYSTEM_INSTRUCTION = (
     "You are a helpful assistant in a chat application. Answer the user's most "
@@ -65,6 +85,11 @@ def describe_error(exc: BaseException, model: str | None = None) -> str:
         )
     if "SAFETY" in text or "blocked" in text.lower():
         return "The provider blocked this response under its safety filters."
+    if isinstance(exc, CircuitOpen):
+        return (
+            "The model provider is failing repeatedly, so requests are paused "
+            "briefly to let it recover. Try again in a moment."
+        )
 
     return f"{type(exc).__name__}: {text[:200]}"
 
@@ -188,17 +213,48 @@ async def classify_dependency_strict(
         f"New message:\n- {prompt[:500]}"
     )
 
-    response = await get_client().aio.models.generate_content(
-        model=model or settings.classifier_model,
-        contents=[types.Content(role="user", parts=[types.Part.from_text(text=question)])],
-        config=types.GenerateContentConfig(
-            system_instruction=DEPENDENCY_SYSTEM,
-            response_mime_type="application/json",
-            response_schema=DEPENDENCY_SCHEMA,
-            temperature=0,
-        ),
-    )
-    return bool(json.loads(response.text)["depends_on_prior"])
+    async def call() -> str:
+        response = await get_client().aio.models.generate_content(
+            model=model or settings.classifier_model,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=question)])],
+            config=types.GenerateContentConfig(
+                system_instruction=DEPENDENCY_SYSTEM,
+                response_mime_type="application/json",
+                response_schema=DEPENDENCY_SCHEMA,
+                temperature=0,
+            ),
+        )
+        return response.text
+
+    text = await _with_retry(call)
+    return bool(json.loads(text)["depends_on_prior"])
+
+
+async def _with_retry(call):
+    """Run a provider coroutine through the breaker, retrying transient failures.
+
+    Safe only for idempotent, non-streaming calls (the classifier) — a stream
+    that has emitted tokens must not be retried, which the streaming path handles
+    itself.
+    """
+    settings = get_settings()
+    breaker = _breaker()
+    attempt = 0
+    while True:
+        attempt += 1
+        if not breaker.allow():
+            raise CircuitOpen("provider circuit is open")
+        try:
+            result = await call()
+            breaker.record_success()
+            return result
+        except Exception as exc:
+            breaker.record_failure()
+            if resilience.is_transient(exc) and attempt <= settings.provider_max_retries:
+                telemetry.PROVIDER_RETRIES.inc()
+                await asyncio.sleep(resilience.backoff(attempt, settings.provider_retry_base_seconds))
+                continue
+            raise
 
 
 FAKE_FAIL_MARKER = "[[fail]]"
@@ -268,20 +324,43 @@ async def stream_completion(
         else:
             contents.append(types.Content(role="user", parts=image_parts))
 
-    stream = await get_client().aio.models.generate_content_stream(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION),
-    )
-
-    async for chunk in stream:
-        # Usage is reported cumulatively, and only on some chunks, so the last
-        # one carrying it holds the final counts.
-        if chunk.usage_metadata is not None:
-            if chunk.usage_metadata.prompt_token_count is not None:
-                usage.prompt_tokens = chunk.usage_metadata.prompt_token_count
-            if chunk.usage_metadata.candidates_token_count is not None:
-                usage.completion_tokens = chunk.usage_metadata.candidates_token_count
-
-        if chunk.text:
-            yield chunk.text
+    settings = get_settings()
+    breaker = _breaker()
+    attempt = 0
+    while True:
+        attempt += 1
+        if not breaker.allow():
+            raise CircuitOpen("provider circuit is open")
+        emitted = 0
+        try:
+            stream = await get_client().aio.models.generate_content_stream(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION),
+            )
+            async for chunk in stream:
+                # Usage is reported cumulatively, and only on some chunks, so the
+                # last one carrying it holds the final counts.
+                if chunk.usage_metadata is not None:
+                    if chunk.usage_metadata.prompt_token_count is not None:
+                        usage.prompt_tokens = chunk.usage_metadata.prompt_token_count
+                    if chunk.usage_metadata.candidates_token_count is not None:
+                        usage.completion_tokens = chunk.usage_metadata.candidates_token_count
+                if chunk.text:
+                    emitted += 1
+                    yield chunk.text
+            breaker.record_success()
+            return
+        except Exception as exc:
+            breaker.record_failure()
+            # Retry only if nothing was emitted — once tokens have streamed, a
+            # retry would duplicate text, so the failure must surface instead.
+            if (
+                emitted == 0
+                and resilience.is_transient(exc)
+                and attempt <= settings.provider_max_retries
+            ):
+                telemetry.PROVIDER_RETRIES.inc()
+                await asyncio.sleep(resilience.backoff(attempt, settings.provider_retry_base_seconds))
+                continue
+            raise

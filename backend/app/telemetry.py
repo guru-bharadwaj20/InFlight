@@ -58,6 +58,15 @@ SPECULATION_OUTCOME = Counter(
 JOBS_ACTIVE = Gauge(
     "inflight_jobs_active", "Generation jobs currently running in this worker"
 )
+PROVIDER_RETRIES = Counter(
+    "inflight_provider_retries_total", "Transient provider failures retried"
+)
+CIRCUIT_TRIPS = Counter(
+    "inflight_circuit_trips_total", "Times the provider circuit breaker opened"
+)
+CIRCUIT_STATE = Gauge(
+    "inflight_circuit_state", "Provider circuit: 0 closed, 1 half-open, 2 open"
+)
 SCHEDULER_WAITING = Gauge(
     "inflight_scheduler_waiting", "Jobs queued for a generation slot (backpressure)"
 )

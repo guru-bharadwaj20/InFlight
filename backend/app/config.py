@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     use_fake_llm: bool = False
     fake_llm_chunk_delay_ms: int = 45
 
+    # Provider resilience (app/resilience.py). Transient failures (429/503) are
+    # retried with jittered exponential backoff; after enough consecutive
+    # failures the circuit opens and calls fail fast for a cooldown rather than
+    # piling more doomed requests onto a provider that is already down.
+    provider_max_retries: int = 3
+    provider_retry_base_seconds: float = 1.0
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_cooldown_seconds: float = 30.0
+
     # A dependent job waits for everything submitted before it. The cap stops one
     # wedged predecessor from stranding a job forever — past it, answering with a
     # slightly stale snapshot beats never answering at all.

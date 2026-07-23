@@ -172,6 +172,10 @@ assertion.
   bound, a token-bucket rate limit (overload becomes backpressure, not 429s), and
   round-robin fairness across conversations so one user's burst can't starve
   another's.
+- **Provider resilience** — transient failures (429/503) retry with jittered
+  exponential backoff, and a circuit breaker opens after repeated failures to fail
+  fast instead of piling doomed requests onto a struggling provider. Streaming is
+  retried only before the first token, so a retry never duplicates text.
 - **Light / dark themes** with a persisted, no-flash toggle.
 
 ---
