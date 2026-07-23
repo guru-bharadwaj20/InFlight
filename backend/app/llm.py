@@ -245,8 +245,14 @@ async def stream_completion(
     turns: Sequence[Turn],
     usage: Usage,
     model: str | None = None,
+    images: Sequence[tuple[str, bytes]] = (),
 ) -> AsyncIterator[str]:
-    """Stream a completion for `turns`, recording token counts into `usage`."""
+    """Stream a completion for `turns`, recording token counts into `usage`.
+
+    `images` are attachments on the newest prompt (a Gemini vision call); they
+    are added as parts on the final user turn so the model reads them alongside
+    the question they were sent with.
+    """
     if get_settings().use_fake_llm:
         async for text in _stream_fake(turns, usage):
             yield text
@@ -254,9 +260,17 @@ async def stream_completion(
 
     model = model or get_settings().generation_model
 
+    contents = to_contents(turns)
+    if images:
+        image_parts = [types.Part.from_bytes(data=data, mime_type=mime) for mime, data in images]
+        if contents and contents[-1].role == "user":
+            contents[-1].parts = list(contents[-1].parts or []) + image_parts
+        else:
+            contents.append(types.Content(role="user", parts=image_parts))
+
     stream = await get_client().aio.models.generate_content_stream(
         model=model,
-        contents=to_contents(turns),
+        contents=contents,
         config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION),
     )
 

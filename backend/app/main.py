@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import redis_client
 from .config import get_settings
 from .db import dispose_engine, init_engine
-from .routers import auth, conversations, health, pricing, ws
+from .routers import auth, conversations, health, models, pricing, ws
 
 
 @asynccontextmanager
@@ -42,6 +42,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(pricing.router)
+app.include_router(models.router)
 app.include_router(ws.router)
 
 

@@ -156,9 +156,16 @@ export function useConversation(conversationId: string) {
   }, [conversationId, applyFrame]);
 
   const send = useCallback(
-    async (content: string, parentMessageId?: string | null) => {
+    async (
+      content: string,
+      options?: {
+        parentMessageId?: string | null;
+        model?: string | null;
+        attachments?: { mime_type: string; data: string }[];
+      }
+    ) => {
       try {
-        const accepted = await api.sendPrompt(conversationId, content, parentMessageId);
+        const accepted = await api.sendPrompt(conversationId, content, options);
         setRaw((current) => [
           ...current,
           accepted.user_message,

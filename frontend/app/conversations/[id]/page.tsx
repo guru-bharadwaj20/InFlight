@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Message, type MessageStatus, type Pricing } from "@/lib/api";
 import { useConversation } from "@/lib/useConversation";
 import { formatTokens, formatUsd, summarize } from "@/lib/usage";
-import { Composer } from "@/components/Composer";
+import { Composer, type SubmitOptions } from "@/components/Composer";
 
 const STATUS_TEXT: Record<MessageStatus, string> = {
   pending: "text-pending",
@@ -208,11 +208,15 @@ export default function ConversationPage({ params }: { params: { id: string } })
     setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   }
 
-  async function submit(prompt: string) {
+  async function submit(prompt: string, options: SubmitOptions) {
     const parent = replyTo;
     setReplyTo(null);
     setStick(true);
-    await send(prompt, parent?.id);
+    await send(prompt, {
+      parentMessageId: parent?.id,
+      model: options.model,
+      attachments: options.attachments,
+    });
   }
 
   return (

@@ -11,6 +11,7 @@ it, so it cannot borrow that request's session.
 """
 
 import asyncio
+import base64
 import logging
 
 from sqlalchemy import select
@@ -423,6 +424,14 @@ async def run_job(job_id: str, conversation_id: str) -> None:
 
             turns = await build_context(session, job)
 
+            # Images submitted with this prompt, stashed in Redis by the handler.
+            # Decoded here rather than in the LLM layer so that stays free of any
+            # transport concern.
+            images = [
+                (a["mime_type"], base64.b64decode(a["data"]))
+                for a in await redis_client.get_attachments(job_id)
+            ]
+
             job.status = Status.STREAMING
             await session.commit()
             await redis_client.set_job_state(job_id, status=Status.STREAMING)
@@ -430,7 +439,7 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 conversation_id, job_id, {"type": "status", "status": Status.STREAMING}
             )
 
-            async for text in stream_completion(turns, usage, model=model):
+            async for text in stream_completion(turns, usage, model=model, images=images):
                 seq += 1
                 parts.append(text)
                 await redis_client.append_chunk(job_id, text, seq)

@@ -116,6 +116,16 @@ export interface Pricing {
   models: Record<string, ModelRate>;
 }
 
+export interface ModelInfo {
+  id: string;
+  label: string;
+}
+
+export interface Models {
+  default: string;
+  models: ModelInfo[];
+}
+
 /** Both rows a prompt creates. The answer itself arrives over the WebSocket. */
 export interface PromptAccepted {
   user_message: Message;
@@ -220,6 +230,9 @@ export const api = {
   /** Rates only — the client already holds the token counts to apply them to. */
   pricing: () => request<Pricing>("/pricing"),
 
+  /** Free Gemini chat models this key can use, for the composer's picker. */
+  models: () => request<Models>("/models"),
+
   listConversations: () => request<Conversation[]>("/conversations"),
 
   createConversation: (title: string | null) =>
@@ -252,11 +265,23 @@ export const api = {
   sendPrompt: (
     conversationId: string,
     content: string,
-    parentMessageId?: string | null
+    options?: {
+      parentMessageId?: string | null;
+      model?: string | null;
+      attachments?: { mime_type: string; data: string }[];
+    }
   ) =>
     request<PromptAccepted>(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content, parent_message_id: parentMessageId ?? null }),
+      body: JSON.stringify({
+        content,
+        parent_message_id: options?.parentMessageId ?? null,
+        model: options?.model ?? null,
+        attachments: (options?.attachments ?? []).map((a) => ({
+          mime_type: a.mime_type,
+          data: a.data,
+        })),
+      }),
     }),
 
   /** Stop one in-flight answer, keeping whatever it already produced. */

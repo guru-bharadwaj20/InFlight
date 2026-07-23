@@ -77,11 +77,34 @@ class ConversationCreate(BaseModel):
     title: str | None = None
 
 
+class ModelInfo(BaseModel):
+    id: str
+    label: str
+
+
+class ModelsOut(BaseModel):
+    default: str
+    models: list[ModelInfo]
+
+
+class AttachmentIn(BaseModel):
+    """One image sent with a prompt: a MIME type and base64-encoded bytes."""
+
+    mime_type: str
+    data: str
+
+
 class PromptCreate(BaseModel):
     content: str = Field(min_length=1)
     # Set to chain this prompt to an earlier message: a deterministic override
     # that makes the job wait, whatever dependency detection would have said.
     parent_message_id: str | None = None
+    # The model to answer with, chosen in the composer. Falls back to the
+    # configured default when omitted.
+    model: str | None = None
+    # Images attached in the composer, passed to the vision model for this
+    # prompt only. Capped to keep an oversized request from wedging a job.
+    attachments: list[AttachmentIn] = Field(default_factory=list, max_length=6)
 
 
 class PromptAccepted(BaseModel):

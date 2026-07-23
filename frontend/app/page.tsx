@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, type Health } from "@/lib/api";
-import { Composer } from "@/components/Composer";
+import { api } from "@/lib/api";
+import { Composer, type SubmitOptions } from "@/components/Composer";
 import { Logo } from "@/components/Logo";
 
 const SUGGESTIONS = [
@@ -26,21 +26,19 @@ const SUGGESTIONS = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
-  useEffect(() => {
-    api.health().then(setHealth).catch(() => setHealth(null));
-  }, []);
-
   /** Start a chat the way every other assistant does: type, and it exists. */
-  async function start(prompt: string) {
+  async function start(prompt: string, options?: SubmitOptions) {
     if (starting) return;
     setStarting(true);
     try {
       const conversation = await api.createConversation(prompt.slice(0, 48));
-      await api.sendPrompt(conversation.id, prompt);
+      await api.sendPrompt(conversation.id, prompt, {
+        model: options?.model,
+        attachments: options?.attachments,
+      });
       router.push(`/conversations/${conversation.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -69,7 +67,6 @@ export default function HomePage() {
             onSubmit={start}
             disabled={starting}
             placeholder={starting ? "Starting…" : "Ask anything — or two things at once"}
-            model={health?.generation_model}
             autoFocus
           />
         </div>

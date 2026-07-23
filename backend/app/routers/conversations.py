@@ -217,7 +217,7 @@ async def send_prompt(
         status=Status.PENDING,
         submitted_at=cutoff,
         context_cutoff=cutoff,
-        model=settings.generation_model,
+        model=payload.model or settings.generation_model,
         dependency_mode=mode,
         parent_message_id=payload.parent_message_id,
         detected_dependency=verdict,
@@ -242,6 +242,12 @@ async def send_prompt(
     await redis_client.set_job_state(
         job_id, status=Status.PENDING, conversation_id=conversation_id, seq=0
     )
+    # Stash any images before spawning, so the task finds them when it reads its
+    # own prompt. Written under the assistant row's id, which is the job id.
+    if payload.attachments:
+        await redis_client.set_attachments(
+            job_id, [a.model_dump() for a in payload.attachments]
+        )
     jobs.spawn(job_id, conversation_id)
 
     return PromptAccepted(

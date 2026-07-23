@@ -106,6 +106,30 @@ async def clear_buffer(job_id: str) -> None:
     await get_redis().delete(job_buffer_key(job_id))
 
 
+def job_attachments_key(job_id: str) -> str:
+    return f"job:{job_id}:attachments"
+
+
+async def set_attachments(job_id: str, attachments: list[dict]) -> None:
+    """Stash a prompt's images for the job to read once, keyed by job id.
+
+    Passed through Redis rather than a database column because they matter only
+    to the single generation that was submitted with them — not persisted, not
+    redisplayed, not part of any later job's context.
+    """
+    if not attachments:
+        return
+    client = get_redis()
+    await client.set(
+        job_attachments_key(job_id), json.dumps(attachments), ex=JOB_TTL_SECONDS
+    )
+
+
+async def get_attachments(job_id: str) -> list[dict]:
+    raw = await get_redis().get(job_attachments_key(job_id))
+    return json.loads(raw) if raw else []
+
+
 async def job_snapshot(job_id: str) -> tuple[dict[str, str], str]:
     """State and replay buffer for one job, read together.
 
@@ -124,7 +148,7 @@ async def job_snapshot(job_id: str) -> tuple[dict[str, str], str]:
 async def clear_job(job_id: str, conversation_id: str | None = None) -> None:
     client = get_redis()
     async with client.pipeline(transaction=True) as pipe:
-        pipe.delete(job_key(job_id), job_buffer_key(job_id))
+        pipe.delete(job_key(job_id), job_buffer_key(job_id), job_attachments_key(job_id))
         if conversation_id:
             pipe.srem(conversation_active_key(conversation_id), job_id)
         await pipe.execute()
