@@ -116,6 +116,14 @@ export interface Pricing {
   models: Record<string, ModelRate>;
 }
 
+/** Authoritative text-so-far for one job, fetched to heal a gap in the stream. */
+export interface StreamState {
+  status: MessageStatus;
+  text: string;
+  seq: number;
+  final: boolean;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;
@@ -291,6 +299,12 @@ export const api = {
         })),
       }),
     }),
+
+  /** Authoritative text-so-far for a job, to resync after a dropped chunk. */
+  streamState: (conversationId: string, messageId: string) =>
+    request<StreamState>(
+      `/conversations/${conversationId}/messages/${messageId}/stream`
+    ),
 
   /** Stop one in-flight answer, keeping whatever it already produced. */
   cancel: (conversationId: string, messageId: string) =>

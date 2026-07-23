@@ -27,6 +27,9 @@ export function useConversation(conversationId: string) {
   // text wholesale, so any chunk frame at or below the replayed sequence is
   // text we already have.
   const lastSeq = useRef<Map<string, number>>(new Map());
+  // Jobs with a resync in flight, so a burst of gapped frames triggers one fetch
+  // rather than a storm of them.
+  const resyncing = useRef<Set<string>>(new Set());
 
   const patch = useCallback((id: string, changes: Partial<Message>) => {
     setRaw((current) =>
@@ -35,6 +38,29 @@ export function useConversation(conversationId: string) {
       )
     );
   }, []);
+
+  // Heal a detected gap: fetch the authoritative text-so-far and reset to it,
+  // rather than appending past a hole. This is what makes the at-least-once
+  // fan-out deliver exactly-once *text* — a missed chunk is recovered, never
+  // silently skipped.
+  const resync = useCallback(
+    async (jobId: string) => {
+      if (resyncing.current.has(jobId)) return;
+      resyncing.current.add(jobId);
+      try {
+        const state = await api.streamState(conversationId, jobId);
+        // A committed job's text is final: park the cursor high so any late
+        // duplicate chunk is ignored.
+        lastSeq.current.set(jobId, state.final ? Number.MAX_SAFE_INTEGER : state.seq);
+        patch(jobId, { content: state.text, status: state.status });
+      } catch {
+        /* a reconnect and its resume frame will heal it if this failed */
+      } finally {
+        resyncing.current.delete(jobId);
+      }
+    },
+    [conversationId, patch]
+  );
 
   const applyFrame = useCallback(
     (frame: Frame) => {
@@ -46,7 +72,13 @@ export function useConversation(conversationId: string) {
           break;
 
         case "chunk":
-          if (frame.seq <= seen) return;
+          if (frame.seq <= seen) return; // duplicate: already have this text
+          if (frame.seq > seen + 1) {
+            // A forward gap — at least one chunk never arrived. Appending now
+            // would splice text across the hole, so recover the buffer instead.
+            void resync(frame.job_id);
+            return;
+          }
           lastSeq.current.set(frame.job_id, frame.seq);
           setRaw((current) =>
             current.map((message) =>
@@ -95,7 +127,7 @@ export function useConversation(conversationId: string) {
           break;
       }
     },
-    [patch]
+    [patch, resync]
   );
 
   const refresh = useCallback(async () => {

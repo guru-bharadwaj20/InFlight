@@ -142,6 +142,10 @@ assertion.
 - **Observability** — Prometheus metrics at `/metrics` (job outcomes, dependency
   verdicts, wait/TTFT/generation latency histograms, live concurrency) and a
   per-job trace ring buffer at `/traces` for walking one generation's lifecycle.
+- **Resilient streaming** — a formalized at-least-once protocol with per-job
+  sequence numbers, client-side dedup, and gap-healing resync, so a dropped or
+  duplicated frame never renders as a hole. See
+  [docs/streaming-protocol.md](docs/streaming-protocol.md).
 - **Light / dark themes** with a persisted, no-flash toggle.
 
 ---

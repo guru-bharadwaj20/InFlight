@@ -107,6 +107,22 @@ class PromptCreate(BaseModel):
     attachments: list[AttachmentIn] = Field(default_factory=list, max_length=6)
 
 
+class StreamState(BaseModel):
+    """The authoritative text-so-far for one job, for a client to resync against.
+
+    Fetched when the client detects a gap in the chunk sequence (a frame it never
+    received). `seq` is how many chunks this text covers, so the client can reset
+    to it exactly and resume dropping anything it has already seen.
+    """
+
+    status: str
+    text: str
+    seq: int
+    # True once the job has committed and its replay buffer has been dropped, so
+    # `text` here is the final answer from the row, not a live buffer.
+    final: bool = False
+
+
 class PromptAccepted(BaseModel):
     """Both rows a prompt creates: the committed prompt, and the job answering it.
 

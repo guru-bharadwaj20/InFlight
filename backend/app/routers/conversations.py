@@ -20,6 +20,7 @@ from ..schemas import (
     MessageOut,
     PromptAccepted,
     PromptCreate,
+    StreamState,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -390,6 +391,51 @@ async def _await_terminal(
         if asyncio.get_running_loop().time() > deadline:
             return False
         await asyncio.sleep(0.05)
+
+
+@router.get(
+    "/{conversation_id}/messages/{message_id}/stream",
+    response_model=StreamState,
+)
+async def stream_state(
+    conversation_id: str,
+    message_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> StreamState:
+    """The authoritative text-so-far for one job, for resyncing after a gap.
+
+    The streaming protocol is at-least-once: a client drops any chunk it has
+    already seen (`seq` <= its cursor) and, on spotting a *forward* gap (a chunk
+    whose seq skips ahead), fetches this instead of blindly appending — which is
+    what turns a lossy fan-out into exactly-once *text*. While the job streams,
+    this returns the live Redis replay buffer; once it has committed, the buffer
+    is gone and this returns the final answer straight from the row.
+    """
+    await _load_conversation(session, conversation_id, user)
+
+    message = await session.get(Message, message_id)
+    if message is None or message.conversation_id != conversation_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "message not found")
+
+    state, buffer = await redis_client.job_snapshot(message_id)
+    if state:
+        return StreamState(
+            status=state.get("status") or message.status,
+            text=buffer,
+            seq=int(state.get("seq") or 0),
+            final=False,
+        )
+
+    # No live buffer: the job already committed (or never had one). The row is
+    # authoritative, and its content is final — signal that so the client stops
+    # expecting more chunks and ignores any late duplicates.
+    return StreamState(
+        status=message.status,
+        text=message.content or "",
+        seq=0,
+        final=message.status in Status.TERMINAL,
+    )
 
 
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])
