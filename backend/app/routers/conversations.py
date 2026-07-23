@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import dependency, jobs, redis_client
+from .. import dependency, jobs, redis_client, telemetry
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..db import get_session
@@ -249,6 +249,7 @@ async def send_prompt(
             job_id, [a.model_dump() for a in payload.attachments]
         )
     jobs.spawn(job_id, conversation_id)
+    telemetry.PROMPTS_SUBMITTED.inc()
 
     return PromptAccepted(
         user_message=MessageOut.model_validate(user_message),

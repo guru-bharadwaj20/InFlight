@@ -139,6 +139,9 @@ assertion.
 - **Voice** — hold-to-talk and live dictation via the Web Speech API.
 - **Live status strip** — answers in flight, answers landed, tokens, and estimated
   cost, all updating off the same frames that fill the bubbles.
+- **Observability** — Prometheus metrics at `/metrics` (job outcomes, dependency
+  verdicts, wait/TTFT/generation latency histograms, live concurrency) and a
+  per-job trace ring buffer at `/traces` for walking one generation's lifecycle.
 - **Light / dark themes** with a persisted, no-flash toggle.
 
 ---

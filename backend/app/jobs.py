@@ -13,11 +13,12 @@ it, so it cannot borrow that request's session.
 import asyncio
 import base64
 import logging
+import time
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import dependency, redis_client
+from . import dependency, redis_client, telemetry
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
@@ -232,6 +233,7 @@ async def _resolve_dependency(
             job.dependency_reason = "nothing in flight to depend on"
         else:
             texts = [await _text_of(session, pid) for pid in pending]
+            telemetry.CLASSIFIER_CALLS.inc()
             depends = await classify_dependency(
                 await _text_of(session, job.prompt_message_id), texts
             )
@@ -260,18 +262,21 @@ async def _resolve_dependency(
     if verdict != Verdict.DEPENDENT:
         return
 
-    deadline = asyncio.get_running_loop().time() + settings.max_dependency_wait_seconds
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + settings.max_dependency_wait_seconds
     interval = settings.dependency_poll_interval_ms / 1000
     waited = False
+    wait_start = loop.time()
 
     while await _earlier_in_flight(session, job):
-        if asyncio.get_running_loop().time() > deadline:
+        if loop.time() > deadline:
             logger.warning("job %s gave up waiting for predecessors", job.id)
             break
         waited = True
         await asyncio.sleep(interval)
 
     if waited:
+        telemetry.WAIT_SECONDS.observe(loop.time() - wait_start)
         # The whole point of waiting was to see what landed while we waited, so
         # the snapshot has to be retaken. Keeping the original cutoff would mean
         # blocking for an answer and then ignoring it.
@@ -418,11 +423,17 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             return
 
         model = job.model
+        trace = telemetry.begin_trace(job_id, conversation_id, model)
+        telemetry.JOBS_ACTIVE.inc()
         try:
             # Before anything else: does this job have to wait for someone?
-            await _resolve_dependency(session, job, conversation_id)
+            with trace.span("resolve"):
+                await _resolve_dependency(session, job, conversation_id)
+            trace.note(job.detected_dependency, job.dependency_source)
+            telemetry.record_verdict(job.detected_dependency, job.dependency_source)
 
-            turns = await build_context(session, job)
+            with trace.span("context"):
+                turns = await build_context(session, job)
 
             # Images submitted with this prompt, stashed in Redis by the handler.
             # Decoded here rather than in the LLM layer so that stays free of any
@@ -439,13 +450,19 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 conversation_id, job_id, {"type": "status", "status": Status.STREAMING}
             )
 
-            async for text in stream_completion(turns, usage, model=model, images=images):
-                seq += 1
-                parts.append(text)
-                await redis_client.append_chunk(job_id, text, seq)
-                await redis_client.publish(
-                    conversation_id, job_id, {"type": "chunk", "seq": seq, "text": text}
-                )
+            gen_start = time.perf_counter()
+            with trace.span("generate"):
+                async for text in stream_completion(turns, usage, model=model, images=images):
+                    if seq == 0:  # first token: record time-to-first-token
+                        telemetry.TTFT_SECONDS.observe(time.perf_counter() - gen_start)
+                        trace.mark_ttft()
+                    seq += 1
+                    parts.append(text)
+                    await redis_client.append_chunk(job_id, text, seq)
+                    await redis_client.publish(
+                        conversation_id, job_id, {"type": "chunk", "seq": seq, "text": text}
+                    )
+            telemetry.GENERATION_SECONDS.observe(time.perf_counter() - gen_start)
 
             await _finish(
                 session,
@@ -456,6 +473,8 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 usage=usage,
                 model=model,
             )
+            trace.finish("complete", usage.prompt_tokens, usage.completion_tokens)
+            telemetry.JOBS_TOTAL.labels(outcome="complete").inc()
             # Advisory, and deliberately after the answer has been committed and
             # sent: a failure to spot a stale sibling must not fail the job that
             # just succeeded.
@@ -476,12 +495,16 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 error="cancelled",
                 usage=usage,
             )
+            trace.finish("cancelled", usage.prompt_tokens, usage.completion_tokens)
+            telemetry.JOBS_TOTAL.labels(outcome="cancelled").inc()
             raise
 
         except LLMNotConfigured as exc:
             await _finish(
                 session, job, conversation_id, status=Status.ERROR, error=str(exc)
             )
+            trace.finish("error")
+            telemetry.JOBS_TOTAL.labels(outcome="error").inc()
 
         except Exception as exc:
             # One job failing must not touch its siblings, so nothing is
@@ -495,6 +518,10 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 error=describe_error(exc, model),
                 usage=usage,
             )
+            trace.finish("error", usage.prompt_tokens, usage.completion_tokens)
+            telemetry.JOBS_TOTAL.labels(outcome="error").inc()
+        finally:
+            telemetry.JOBS_ACTIVE.dec()
 
 
 __all__ = ["spawn", "cancel", "is_running", "run_job", "build_context"]
