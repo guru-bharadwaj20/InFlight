@@ -1,7 +1,8 @@
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -140,6 +141,7 @@ async def send_prompt(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     user: User = Depends(current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> PromptAccepted:
     """Commit the prompt, then hand its answer to a background job.
 
@@ -151,9 +153,25 @@ async def send_prompt(
     """
     await _load_conversation(session, conversation_id, user)
 
+    # Idempotency: two sends carrying the same key are one intent. The first
+    # claims the key and creates the job; a duplicate returns the first result
+    # instead of spawning a second. Scoped to the user so keys cannot collide
+    # across accounts.
+    idem = f"{user.id}:{idempotency_key}" if idempotency_key else None
+    if idem and not await redis_client.claim_idempotency(idem):
+        replay = await _idempotent_replay(session, idem)
+        if replay is not None:
+            return replay
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "a request with this Idempotency-Key is still being processed",
+        )
+
     if payload.parent_message_id:
         parent = await session.get(Message, payload.parent_message_id)
         if parent is None or parent.conversation_id != conversation_id:
+            if idem:
+                await redis_client.release_idempotency(idem)
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "parent_message_id must name a message in this conversation",
@@ -167,6 +185,8 @@ async def send_prompt(
     if not await redis_client.reserve_active_job(
         conversation_id, job_id, settings.max_concurrent_jobs_per_conversation
     ):
+        if idem:
+            await redis_client.release_idempotency(idem)
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"already at the limit of {settings.max_concurrent_jobs_per_conversation} "
@@ -237,6 +257,8 @@ async def send_prompt(
         # The slot was claimed before the rows existed, so a failed write must
         # give it back or the conversation leaks capacity until the TTL expires.
         await redis_client.unregister_active_job(conversation_id, job_id)
+        if idem:
+            await redis_client.release_idempotency(idem)
         raise
 
     # Set before returning so the WebSocket's resume list sees the job the moment
@@ -257,9 +279,39 @@ async def send_prompt(
         model=assistant_message.model, verdict=verdict, source=source,
     )
 
+    if idem:
+        # Record the result so a duplicate returns exactly these two rows.
+        await redis_client.store_idempotency(
+            idem, json.dumps({"u": user_message.id, "a": assistant_message.id})
+        )
+
     return PromptAccepted(
         user_message=MessageOut.model_validate(user_message),
         assistant_message=MessageOut.model_validate(assistant_message),
+    )
+
+
+async def _idempotent_replay(session: AsyncSession, idem: str) -> PromptAccepted | None:
+    """Return the result a prior identical submission produced, or None if the
+    original is still in flight (claimed but not yet committed)."""
+    raw = await redis_client.get_idempotency(idem)
+    if not raw or raw == "pending":
+        # The original is mid-creation; give it a moment to commit its rows.
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            raw = await redis_client.get_idempotency(idem)
+            if raw and raw != "pending":
+                break
+        else:
+            return None
+    ids = json.loads(raw)
+    user_msg = await session.get(Message, ids["u"])
+    asst_msg = await session.get(Message, ids["a"])
+    if user_msg is None or asst_msg is None:
+        return None
+    return PromptAccepted(
+        user_message=MessageOut.model_validate(user_msg),
+        assistant_message=MessageOut.model_validate(asst_msg),
     )
 
 

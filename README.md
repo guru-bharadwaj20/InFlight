@@ -148,6 +148,9 @@ assertion.
   fresh-snapshot re-run only if the retrospective check confirms it missed
   context: pessimistic waiting becomes optimistic concurrency with rollback.
 - **Accounts** — signup/login (bcrypt + JWT), per-user conversation isolation.
+- **Idempotent submission** — an `Idempotency-Key` header makes a retried or
+  double-clicked send create one job, not two; the duplicate returns the original
+  result. Atomic claim in Redis, scoped per user.
 - **Model picker** — any Gemini chat model the API key can use, queried live.
 - **Attachments** — images, camera capture, and public GitHub file contents.
 - **Voice** — hold-to-talk and live dictation via the Web Speech API.

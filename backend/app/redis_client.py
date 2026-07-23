@@ -192,6 +192,38 @@ async def active_job_count(conversation_id: str) -> int:
     return int(await get_redis().scard(conversation_active_key(conversation_id)))
 
 
+# --- Idempotency keys -----------------------------------------------------
+#
+# A prompt submission is not naturally idempotent: retry it and you get a second
+# job. An Idempotency-Key lets the client mark two sends as the same intent; the
+# first claims the key and creates the job, and any duplicate returns the first
+# result instead of creating another.
+
+IDEMPOTENCY_TTL_SECONDS = 60 * 60 * 24
+
+
+async def claim_idempotency(key: str) -> bool:
+    """Atomically claim an idempotency key (SET NX). False means it already exists."""
+    got = await get_redis().set(
+        f"idem:{key}", "pending", nx=True, ex=IDEMPOTENCY_TTL_SECONDS
+    )
+    return bool(got)
+
+
+async def store_idempotency(key: str, value: str) -> None:
+    """Record the result under an already-claimed key, keeping the TTL."""
+    await get_redis().set(f"idem:{key}", value, ex=IDEMPOTENCY_TTL_SECONDS)
+
+
+async def get_idempotency(key: str) -> str | None:
+    return await get_redis().get(f"idem:{key}")
+
+
+async def release_idempotency(key: str) -> None:
+    """Drop a claim whose creation failed, so an honest retry is not blocked."""
+    await get_redis().delete(f"idem:{key}")
+
+
 # --- Streaming fan-out ----------------------------------------------------
 
 

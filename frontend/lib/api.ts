@@ -289,6 +289,9 @@ export const api = {
   ) =>
     request<PromptAccepted>(`/conversations/${conversationId}/messages`, {
       method: "POST",
+      // A per-submission idempotency key, so a network retry of this exact send
+      // is deduplicated server-side into one job rather than two.
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({
         content,
         parent_message_id: options?.parentMessageId ?? null,
