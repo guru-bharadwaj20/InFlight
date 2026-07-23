@@ -170,15 +170,23 @@ export type Frame =
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = auth.token;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    // fetch() rejects with a bare "Failed to fetch" TypeError when the server is
+    // unreachable (down, restarting, or CORS-blocked) — before any response
+    // exists. Translate it into something a person can act on.
+    throw new Error("Can't reach the server. Is the backend running?");
+  }
 
   if (response.status === 401) {
     // The token is gone or expired. Drop it so the shell routes to /login

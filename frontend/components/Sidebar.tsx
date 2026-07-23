@@ -177,6 +177,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -193,10 +195,24 @@ export function Sidebar() {
   }, [refresh, pathname]);
 
   async function startNew() {
-    const created = await api.createConversation(null);
-    await refresh();
-    router.push(`/conversations/${created.id}`);
+    if (creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await api.createConversation(null);
+      // Navigate straight away — the pathname change re-fires refresh() above,
+      // so the new row appears without a second blocking round-trip here.
+      router.push(`/conversations/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setCreating(false);
+    }
   }
+
+  // Clear the "creating" latch once the URL has actually changed.
+  useEffect(() => {
+    setCreating(false);
+  }, [pathname]);
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-edge bg-bg/80 backdrop-blur">
@@ -211,11 +227,15 @@ export function Sidebar() {
       <div className="px-2">
         <button
           onClick={startNew}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+          disabled={creating}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-60"
         >
           <span className="text-flight">{IconPlus}</span>
-          New chat
+          {creating ? "Starting…" : "New chat"}
         </button>
+        {error && (
+          <p className="mt-1.5 px-2.5 text-xs text-failed">{error}</p>
+        )}
       </div>
 
       <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-2">
