@@ -214,9 +214,12 @@ the published ports if any are already in use.
   coreference resolution.
 - **Waiting is bounded by a guess.** Past `MAX_DEPENDENCY_WAIT_SECONDS` a job
   proceeds with a stale snapshot rather than hanging.
-- **Single-process.** Jobs live in one FastAPI worker's event loop; Redis pub/sub
-  would survive horizontal scaling, but cancellation and the task registry would
-  not.
+- **Horizontally scalable, within limits.** The concurrency cap is an atomic
+  Redis script, streaming is Redis pub/sub, and cancellation now broadcasts on a
+  Redis control channel — so a cancel landing on any worker reaches the one
+  actually running the job. Each job's asyncio task still lives in a single
+  worker (which is correct: whoever holds the task is the only one that can
+  cancel it), so run N replicas behind a load balancer and it holds.
 - **Not novel research.** MVCC is decades old and async requests are routine; what
   is unusual is the combination — N generations in flight against one shared linear
   history, resolved by snapshot isolation rather than queuing or branching.

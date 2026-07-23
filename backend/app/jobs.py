@@ -12,6 +12,7 @@ it, so it cannot borrow that request's session.
 
 import asyncio
 import base64
+import json
 import logging
 import time
 
@@ -22,6 +23,7 @@ from . import dependency, redis_client, telemetry
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
+from .ids import new_id
 from .llm import (
     LLMNotConfigured,
     Turn,
@@ -35,8 +37,17 @@ from .models import DependencyMode, Message, Role, Status, utcnow
 logger = logging.getLogger(__name__)
 
 # asyncio only holds a weak reference to a running task, so a task nobody keeps
-# a reference to can be garbage-collected mid-generation.
+# a reference to can be garbage-collected mid-generation. This registry is
+# per-worker by design: it holds only the tasks *this* process is running, which
+# is exactly the set this process is able to cancel directly.
 _running: dict[str, asyncio.Task] = {}
+
+# Identifies this worker in logs and control messages. Cancellation across
+# workers does not depend on it — ownership is implicit in `_running` — but it
+# makes the control plane observable.
+WORKER_ID = new_id()
+
+_control_task: asyncio.Task | None = None
 
 
 def spawn(job_id: str, conversation_id: str) -> asyncio.Task:
@@ -50,12 +61,63 @@ def is_running(job_id: str) -> bool:
     return job_id in _running
 
 
-async def cancel(job_id: str) -> bool:
+def cancel_local(job_id: str) -> bool:
+    """Cancel a job this worker is running. False if it lives elsewhere (or not
+    at all) — the caller then relies on the control broadcast to reach its owner."""
     task = _running.get(job_id)
     if task is None:
         return False
     task.cancel()
     return True
+
+
+async def request_cancel(job_id: str) -> bool:
+    """Ask whichever worker owns this job to cancel it.
+
+    Tries the local registry first (the common single-worker case, and instant),
+    then broadcasts on the control channel so a peer holding the task acts on it.
+    Returns True if this worker owned and cancelled it directly; a False here does
+    not mean the job will not be cancelled — only that its owner is another
+    worker, which the broadcast reaches.
+    """
+    local = cancel_local(job_id)
+    await redis_client.publish_control({"type": "cancel", "job_id": job_id, "by": WORKER_ID})
+    return local
+
+
+async def _control_loop() -> None:
+    """Act on control broadcasts. Only the worker that owns a job in `_running`
+    will actually cancel anything; for everyone else the message is a no-op."""
+    async with redis_client.subscribe_control() as pubsub:
+        async for message in pubsub.listen():
+            if message.get("type") != "message":
+                continue
+            try:
+                payload = json.loads(message["data"])
+            except (ValueError, TypeError):
+                continue
+            if payload.get("type") == "cancel":
+                job_id = payload.get("job_id")
+                if job_id and job_id in _running:
+                    logger.info("worker %s cancelling job %s on control signal", WORKER_ID, job_id)
+                    cancel_local(job_id)
+
+
+async def start_control_listener() -> None:
+    global _control_task
+    if _control_task is None:
+        _control_task = asyncio.create_task(_control_loop(), name="control-listener")
+
+
+async def stop_control_listener() -> None:
+    global _control_task
+    if _control_task is not None:
+        _control_task.cancel()
+        try:
+            await _control_task
+        except asyncio.CancelledError:
+            pass
+        _control_task = None
 
 
 async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
@@ -524,4 +586,14 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             telemetry.JOBS_ACTIVE.dec()
 
 
-__all__ = ["spawn", "cancel", "is_running", "run_job", "build_context"]
+__all__ = [
+    "spawn",
+    "request_cancel",
+    "cancel_local",
+    "is_running",
+    "run_job",
+    "build_context",
+    "start_control_listener",
+    "stop_control_listener",
+    "WORKER_ID",
+]

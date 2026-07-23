@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -92,7 +93,7 @@ async def delete_conversation(
     # Cancel anything still generating so no task keeps writing to a Redis key
     # for a conversation that no longer exists.
     for job_id in await redis_client.active_jobs(conversation_id):
-        await jobs.cancel(job_id)
+        await jobs.request_cancel(job_id)  # reaches the owning worker, wherever it is
         await redis_client.clear_job(job_id, conversation_id)
     await session.delete(conversation)  # messages cascade via the FK
     await session.commit()
@@ -266,6 +267,7 @@ async def regenerate(
     conversation_id: str,
     message_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> Message:
     """Re-run one answer against a fresh snapshot.
 
@@ -321,6 +323,7 @@ async def cancel_message(
     conversation_id: str,
     message_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> Message:
     """Stop one in-flight answer, keeping whatever it had already produced.
 
@@ -335,9 +338,16 @@ async def cancel_message(
     if message.status in Status.TERMINAL:
         return message
 
-    if not await jobs.cancel(message_id):
-        # No task owns it — it was orphaned by a restart, so the row would sit
-        # "streaming" forever. Settle it here rather than leave it stuck.
+    # Ask whichever worker owns the job to cancel it. In a single-worker deploy
+    # this cancels locally and instantly; across workers it broadcasts, and the
+    # owner settles the row and emits the cancelled frame through the normal path.
+    await jobs.request_cancel(message_id)
+
+    # Give the owner a moment to settle it, then check the authoritative state.
+    settled = await _await_terminal(session, message_id, timeout=1.5)
+    if not settled:
+        # Nobody owns the task — it was orphaned by a restart, so the row would
+        # sit "streaming" forever. Settle it here rather than leave it stuck.
         message.status = Status.CANCELLED
         message.error = "cancelled"
         await session.commit()
@@ -361,6 +371,27 @@ async def cancel_message(
     return message
 
 
+async def _await_terminal(
+    session: AsyncSession, message_id: str, *, timeout: float
+) -> bool:
+    """Poll the authoritative row until it reaches a terminal state or times out.
+
+    Scalar column reads, so the owner's commit (made in another session, possibly
+    another worker) is observed rather than a stale identity-map copy.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        result = await session.execute(
+            select(Message.status).where(Message.id == message_id)
+        )
+        current = result.scalar_one_or_none()
+        if current is None or current in Status.TERMINAL:
+            return True
+        if asyncio.get_running_loop().time() > deadline:
+            return False
+        await asyncio.sleep(0.05)
+
+
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])
 async def get_context_snapshot(
     conversation_id: str,
@@ -368,6 +399,7 @@ async def get_context_snapshot(
         None, description="Snapshot instant (ISO 8601). Defaults to now."
     ),
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> list[Message]:
     """The context a job stamped with `at` would see.
 

@@ -218,3 +218,29 @@ async def frames(pubsub: redis.client.PubSub) -> AsyncIterator[dict[str, Any]]:
         if message.get("type") != "message":
             continue
         yield json.loads(message["data"])
+
+
+# --- Cross-worker control plane -------------------------------------------
+#
+# A job's asyncio task lives in exactly one worker's event loop, so a cancel
+# request that lands on a *different* worker cannot reach it directly. This
+# broadcast channel bridges them: every worker subscribes, and the one that owns
+# the task acts on the message. Ownership stays implicit — whoever holds the task
+# is the only worker whose local registry contains it — so no distributed lock or
+# lease is needed, only the fan-out.
+
+CONTROL_CHANNEL = "channel:control"
+
+
+async def publish_control(payload: dict[str, Any]) -> None:
+    await get_redis().publish(CONTROL_CHANNEL, json.dumps(payload))
+
+
+@asynccontextmanager
+async def subscribe_control() -> AsyncIterator[redis.client.PubSub]:
+    pubsub = get_redis().pubsub(ignore_subscribe_messages=True)
+    try:
+        await pubsub.subscribe(CONTROL_CHANNEL)
+        yield pubsub
+    finally:
+        await pubsub.aclose()
