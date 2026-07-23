@@ -70,6 +70,12 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Structured logging (app/logging_config.py). JSON by default so lines carry
+    # request/job correlation ids for a log pipeline; set LOG_JSON=false for
+    # readable lines in a terminal.
+    log_level: str = "INFO"
+    log_json: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

@@ -24,6 +24,7 @@ from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
 from .ids import new_id
+from .logging_config import job_id_ctx
 from .llm import (
     LLMNotConfigured,
     Turn,
@@ -574,6 +575,11 @@ async def run_job(job_id: str, conversation_id: str) -> None:
     usage = Usage()
     parts: list[str] = []
     seq = 0
+
+    # Stamp this job's id onto every log line it produces (and it inherits the
+    # spawning request's id from the copied context), so logs correlate with
+    # /traces and with the request that started it.
+    job_id_ctx.set(job_id)
 
     async with session_factory()() as session:
         job = await session.get(Message, job_id)

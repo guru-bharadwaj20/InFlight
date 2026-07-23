@@ -159,6 +159,10 @@ assertion.
 - **Observability** — Prometheus metrics at `/metrics` (job outcomes, dependency
   verdicts, wait/TTFT/generation latency histograms, live concurrency) and a
   per-job trace ring buffer at `/traces` for walking one generation's lifecycle.
+- **Structured logging** — every log line is JSON carrying a request id and job
+  id (propagated through `contextvars`), so interleaved generations stay
+  attributable and logs cross-reference the same job_id in `/traces`. Responses
+  echo an `X-Request-ID`.
 - **Event sourcing** — every job transition is appended to a per-conversation
   Redis Stream; the `messages` table is a projection of that append-only log
   (`GET /conversations/{id}/events` returns both), enabling audit and time-travel
