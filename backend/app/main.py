@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import jobs, redis_client, scheduler
+from . import jobs, lifecycle, redis_client, scheduler
 from .config import get_settings
 from .db import dispose_engine, init_engine
 from .logging_config import configure_logging, request_id_ctx
@@ -23,6 +23,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Drain first — let in-flight generations finish (and clients see a clean
+        # done) before tearing down the services those jobs still depend on.
+        await lifecycle.drain(settings.drain_timeout_seconds)
         await jobs.stop_control_listener()
         await scheduler.stop_scheduler()
         await redis_client.close_redis()

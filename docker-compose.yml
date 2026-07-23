@@ -35,6 +35,9 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    # Give the drain time to finish before Docker escalates to SIGKILL — it must
+    # exceed DRAIN_TIMEOUT_SECONDS (default 20s) so in-flight jobs settle cleanly.
+    stop_grace_period: 25s
     depends_on:
       postgres:
         condition: service_healthy

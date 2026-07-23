@@ -169,6 +169,11 @@ assertion.
   id (propagated through `contextvars`), so interleaved generations stay
   attributable and logs cross-reference the same job_id in `/traces`. Responses
   echo an `X-Request-ID`.
+- **Graceful shutdown & probes** — `/health/live` (is the process up?) and
+  `/health/ready` (should it get traffic? — 503 while draining or a dependency is
+  down). On SIGTERM the worker drains: readiness flips to 503 so the load balancer
+  routes away, in-flight generations finish, and only stragglers past the timeout
+  are cancelled (keeping their partial text).
 - **Event sourcing** — every job transition is appended to a per-conversation
   Redis Stream; the `messages` table is a projection of that append-only log
   (`GET /conversations/{id}/events` returns both), enabling audit and time-travel

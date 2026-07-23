@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
+    # On shutdown, stop accepting traffic (readiness flips to 503) and wait up to
+    # this long for in-flight generations to finish before cancelling stragglers.
+    drain_timeout_seconds: float = 20.0
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
