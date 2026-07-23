@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import jobs, redis_client
+from . import jobs, redis_client, scheduler
 from .config import get_settings
 from .db import dispose_engine, init_engine
 from .routers import auth, conversations, health, metrics, models, pricing, ws
@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await jobs.stop_control_listener()
+        await scheduler.stop_scheduler()
         await redis_client.close_redis()
         await dispose_engine()
 

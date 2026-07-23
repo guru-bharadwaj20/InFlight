@@ -146,6 +146,10 @@ assertion.
   sequence numbers, client-side dedup, and gap-healing resync, so a dropped or
   duplicated frame never renders as a hole. See
   [docs/streaming-protocol.md](docs/streaming-protocol.md).
+- **Fair scheduler** — a process-wide admission layer with a global concurrency
+  bound, a token-bucket rate limit (overload becomes backpressure, not 429s), and
+  round-robin fairness across conversations so one user's burst can't starve
+  another's.
 - **Light / dark themes** with a persisted, no-flash toggle.
 
 ---

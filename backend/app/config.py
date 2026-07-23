@@ -18,6 +18,18 @@ class Settings(BaseSettings):
 
     max_concurrent_jobs_per_conversation: int = 8
 
+    # Process-wide admission control (app/scheduler.py). The per-conversation cap
+    # above stops one chat flooding itself; these bound the whole worker and keep
+    # the provider approached at a sustainable rate. A generous default that does
+    # not change behaviour under normal load — the fair queuing only engages once
+    # more than this many generations are genuinely in flight at once. Set to 0
+    # to disable the gate entirely.
+    max_global_concurrency: int = 64
+    # Requests/minute permitted to the model, smoothed by a token bucket. 0 means
+    # unlimited; set it to your provider's real limit to turn an overload into
+    # backpressure (waiting) instead of a burst of 429s.
+    generation_rate_per_min: float = 0.0
+
     # Signs the auth tokens. The default is fine for local development; set
     # JWT_SECRET in .env for anything that leaves this machine, or every token
     # is forgeable.

@@ -13,13 +13,16 @@ from fastapi import APIRouter, Query
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
-from .. import telemetry
+from .. import scheduler, telemetry
 
 router = APIRouter(tags=["observability"])
 
 
 @router.get("/metrics")
 async def metrics() -> Response:
+    # Sample the scheduler's queue depth at scrape time — a point-in-time gauge
+    # is most honest read exactly when it is reported.
+    telemetry.SCHEDULER_WAITING.set(scheduler.get_scheduler().waiting())
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

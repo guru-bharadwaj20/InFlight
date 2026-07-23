@@ -49,6 +49,14 @@ CLASSIFIER_CALLS = Counter(
 JOBS_ACTIVE = Gauge(
     "inflight_jobs_active", "Generation jobs currently running in this worker"
 )
+SCHEDULER_WAITING = Gauge(
+    "inflight_scheduler_waiting", "Jobs queued for a generation slot (backpressure)"
+)
+SLOT_WAIT_SECONDS = Histogram(
+    "inflight_slot_wait_seconds",
+    "Time a job waited for a fair generation slot",
+    buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
+)
 
 # Buckets chosen for the quantities this system actually produces: sub-second
 # TTFT, single-digit-second generations, and dependency waits up to the cap.

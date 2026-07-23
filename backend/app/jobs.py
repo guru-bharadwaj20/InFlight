@@ -19,7 +19,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import dependency, redis_client, telemetry
+from . import dependency, redis_client, scheduler, telemetry
 from .config import get_settings
 from .db import session_factory
 from .dependency import Source, Verdict
@@ -505,26 +505,37 @@ async def run_job(job_id: str, conversation_id: str) -> None:
                 for a in await redis_client.get_attachments(job_id)
             ]
 
-            job.status = Status.STREAMING
-            await session.commit()
-            await redis_client.set_job_state(job_id, status=Status.STREAMING)
-            await redis_client.publish(
-                conversation_id, job_id, {"type": "status", "status": Status.STREAMING}
-            )
+            # Fair admission: wait here (still pending) for a process-wide slot
+            # and a rate-limit token before touching the model. Queued jobs are
+            # served round-robin per conversation, so one chat's burst cannot
+            # starve another's.
+            with trace.span("await_slot"):
+                slot = scheduler.get_scheduler().slot(conversation_id)
+                slot_wait = await slot.__aenter__()
+            telemetry.SLOT_WAIT_SECONDS.observe(slot_wait)
+            try:
+                job.status = Status.STREAMING
+                await session.commit()
+                await redis_client.set_job_state(job_id, status=Status.STREAMING)
+                await redis_client.publish(
+                    conversation_id, job_id, {"type": "status", "status": Status.STREAMING}
+                )
 
-            gen_start = time.perf_counter()
-            with trace.span("generate"):
-                async for text in stream_completion(turns, usage, model=model, images=images):
-                    if seq == 0:  # first token: record time-to-first-token
-                        telemetry.TTFT_SECONDS.observe(time.perf_counter() - gen_start)
-                        trace.mark_ttft()
-                    seq += 1
-                    parts.append(text)
-                    await redis_client.append_chunk(job_id, text, seq)
-                    await redis_client.publish(
-                        conversation_id, job_id, {"type": "chunk", "seq": seq, "text": text}
-                    )
-            telemetry.GENERATION_SECONDS.observe(time.perf_counter() - gen_start)
+                gen_start = time.perf_counter()
+                with trace.span("generate"):
+                    async for text in stream_completion(turns, usage, model=model, images=images):
+                        if seq == 0:  # first token: record time-to-first-token
+                            telemetry.TTFT_SECONDS.observe(time.perf_counter() - gen_start)
+                            trace.mark_ttft()
+                        seq += 1
+                        parts.append(text)
+                        await redis_client.append_chunk(job_id, text, seq)
+                        await redis_client.publish(
+                            conversation_id, job_id, {"type": "chunk", "seq": seq, "text": text}
+                        )
+                telemetry.GENERATION_SECONDS.observe(time.perf_counter() - gen_start)
+            finally:
+                await slot.__aexit__(None, None, None)
 
             await _finish(
                 session,
