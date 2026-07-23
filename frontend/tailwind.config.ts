@@ -1,6 +1,15 @@
 import type { Config } from "tailwindcss";
 
+/**
+ * Colours are driven by CSS variables (see globals.css) so a single `.dark`
+ * class on <html> reskins the whole app. Components reference semantic tokens
+ * — surface, ink, edge, flight — never raw hex, so the palette lives in exactly
+ * one place and light/dark stay in lockstep.
+ */
+const withVar = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
+
 const config: Config = {
+  darkMode: "class",
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
@@ -9,29 +18,34 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Warm paper base rather than flat white — the surface reads as calm at
-        // full-screen size, where pure white glares.
-        paper: "#faf9f7",
-        surface: "#ffffff",
-        edge: "#e8e5e0",
+        bg: withVar("--bg"),
+        surface: withVar("--surface"),
+        "surface-2": withVar("--surface-2"),
+        edge: withVar("--edge"),
         ink: {
-          DEFAULT: "#1f1e1d",
-          soft: "#5f5b55",
-          faint: "#8e8981",
+          DEFAULT: withVar("--ink"),
+          soft: withVar("--ink-soft"),
+          faint: withVar("--ink-faint"),
         },
-        // Signature colour: prompts in flight. Used for the streaming caret, the
-        // in-flight counter, and nothing else, so it always means one thing.
+        // Brand primary — blue. Reserved for "in flight" and interactive accents.
         flight: {
-          DEFAULT: "#2f6df6",
-          soft: "#eaf1fe",
+          DEFAULT: withVar("--flight"),
+          soft: withVar("--flight-soft"),
         },
-        pending: "#b08a3e",
-        streaming: "#2f6df6",
-        complete: "#3f8f5f",
-        failed: "#c0453b",
+        // Brand secondary — orange. The logo, the hero mark, highlight accents.
+        ember: {
+          DEFAULT: withVar("--ember"),
+          soft: withVar("--ember-soft"),
+        },
+        // Semantic, each used only for its conventional meaning.
+        pending: withVar("--yellow"),
+        streaming: withVar("--flight"),
+        complete: withVar("--green"),
+        failed: withVar("--red"),
+        // Kept as aliases so existing markup reads naturally.
+        paper: withVar("--bg"),
       },
       fontFamily: {
-        // No webfont fetch: the hero has to render instantly and offline.
         serif: ["Georgia", "Cambria", "Times New Roman", "serif"],
         sans: [
           "ui-sans-serif",
@@ -44,8 +58,8 @@ const config: Config = {
         ],
       },
       boxShadow: {
-        composer: "0 1px 2px rgba(31,30,29,.04), 0 8px 24px rgba(31,30,29,.06)",
-        lift: "0 1px 2px rgba(31,30,29,.05), 0 2px 8px rgba(31,30,29,.04)",
+        composer: "0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.10)",
+        lift: "0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.05)",
       },
     },
   },

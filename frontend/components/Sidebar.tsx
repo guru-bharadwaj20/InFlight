@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Conversation, type Health } from "@/lib/api";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./theme";
 
 function NavItem({
   href,
@@ -21,7 +22,7 @@ function NavItem({
     <Link
       href={href}
       className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-        active ? "bg-white text-ink shadow-lift" : "text-ink-soft hover:bg-white/70"
+        active ? "bg-surface text-ink shadow-lift" : "text-ink-soft hover:bg-surface-2"
       }`}
     >
       <span className="text-ink-faint">{icon}</span>
@@ -68,18 +69,19 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-edge bg-paper/80 backdrop-blur">
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-edge bg-bg/80 backdrop-blur">
       <div className="flex items-center gap-2 px-4 py-4">
-        <span className="text-flight">
-          <Logo className="h-5 w-5" />
+        <Logo className="h-6 w-6" />
+        <span className="font-serif text-lg tracking-tight">
+          In<span className="text-flight">Flight</span>
         </span>
-        <span className="font-serif text-lg tracking-tight">InFlight</span>
+        <ThemeToggle className="ml-auto" />
       </div>
 
       <div className="space-y-0.5 px-2">
         <button
           onClick={startNew}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-ink-soft transition-colors hover:bg-white/70"
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-ink-soft transition-colors hover:bg-surface-2"
         >
           <span className="text-ink-faint">{IconPlus}</span>
           New chat
@@ -99,8 +101,8 @@ export function Sidebar() {
                   href={`/conversations/${conversation.id}`}
                   className={`block truncate rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
                     pathname === `/conversations/${conversation.id}`
-                      ? "bg-white text-ink shadow-lift"
-                      : "text-ink-soft hover:bg-white/70"
+                      ? "bg-surface text-ink shadow-lift"
+                      : "text-ink-soft hover:bg-surface-2"
                   }`}
                 >
                   {conversation.title ?? "Untitled chat"}

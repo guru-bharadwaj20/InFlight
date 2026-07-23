@@ -2,36 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * One palette, two themes. Values are space-separated RGB channels so Tailwind's
+ * `rgb(var(--x) / <alpha>)` can apply opacity. Brand is blue (flight) + orange
+ * (ember); green/red/yellow keep their conventional meanings; the dark base is
+ * a grayish black rather than pure #000, which glares.
+ */
 :root {
+  --bg: 247 246 243; /* warm off-white */
+  --surface: 255 255 255;
+  --surface-2: 244 243 240;
+  --edge: 226 223 217;
+  --ink: 28 27 26;
+  --ink-soft: 92 88 82;
+  --ink-faint: 142 137 129;
+
+  --flight: 37 99 235; /* blue-600 */
+  --flight-soft: 224 235 255;
+  --ember: 234 88 12; /* orange-600 */
+  --ember-soft: 255 233 214;
+
+  --green: 22 145 82;
+  --red: 200 55 45;
+  --yellow: 176 130 30;
+
   color-scheme: light;
 }
 
-body {
-  @apply bg-paper text-ink antialiased;
+.dark {
+  --bg: 23 23 27; /* grayish black */
+  --surface: 32 32 38;
+  --surface-2: 40 40 47;
+  --edge: 52 52 60;
+  --ink: 236 235 232;
+  --ink-soft: 176 172 166;
+  --ink-faint: 128 124 118;
+
+  --flight: 96 145 255; /* lifted for contrast on dark */
+  --flight-soft: 32 48 84;
+  --ember: 249 132 74;
+  --ember-soft: 74 46 24;
+
+  --green: 74 200 130;
+  --red: 240 120 110;
+  --yellow: 220 180 90;
+
+  color-scheme: dark;
 }
 
-/* Soft wash behind the landing hero. Fixed and non-interactive so it sits under
-   the content without affecting layout or catching pointer events. */
+body {
+  @apply bg-bg text-ink antialiased;
+}
+
+/* Blue→orange wash behind the landing hero, faint and non-interactive. */
 .hero-wash {
   position: fixed;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(60rem 32rem at 50% -8%, rgba(47, 109, 246, 0.1), transparent 70%),
-    radial-gradient(40rem 24rem at 12% 8%, rgba(160, 132, 232, 0.08), transparent 70%);
+    radial-gradient(58rem 30rem at 50% -6%, rgb(var(--flight) / 0.16), transparent 70%),
+    radial-gradient(40rem 24rem at 88% 4%, rgb(var(--ember) / 0.12), transparent 70%);
 }
 
-/* Scrollbars, toned down so a busy conversation does not look striped. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d9d5ce transparent;
+  scrollbar-color: rgb(var(--edge)) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: #d9d5ce;
+  background-color: rgb(var(--edge));
   border-radius: 9999px;
   border: 3px solid transparent;
   background-clip: content-box;
