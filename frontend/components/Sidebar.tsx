@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Conversation } from "@/lib/api";
@@ -26,6 +27,8 @@ function ChatRow({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [draft, setDraft] = useState(conversation.title ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -48,11 +51,15 @@ function ChatRow({
     onChanged();
   }
 
-  async function remove() {
-    setMenuOpen(false);
-    if (!window.confirm("Delete this chat? This cannot be undone.")) return;
-    await api.deleteConversation(conversation.id);
-    onDeleted();
+  async function confirmDelete() {
+    setDeleting(true);
+    try {
+      await api.deleteConversation(conversation.id);
+      onDeleted();
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
   }
 
   if (renaming) {
@@ -120,13 +127,104 @@ function ChatRow({
             >
               <PencilIcon /> Rename
             </MenuItem>
-            <MenuItem onClick={remove} danger>
+            <MenuItem
+              onClick={() => {
+                setMenuOpen(false);
+                setConfirmingDelete(true);
+              }}
+              danger
+            >
               <TrashIcon /> Delete
             </MenuItem>
           </div>
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete chat"
+        body="Are you sure you want to delete this chat? This cannot be undone."
+        confirmLabel={deleting ? "Deleting…" : "Delete"}
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmingDelete(false)}
+      />
     </li>
+  );
+}
+
+/** Themed replacement for window.confirm — a centered card with a backdrop, an
+ *  Escape-to-cancel handler, and a destructive (red) confirm button. */
+function ConfirmDialog({
+  open,
+  title,
+  body,
+  confirmLabel,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={onCancel}
+          />
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="relative w-full max-w-sm rounded-2xl border border-edge bg-surface p-5 shadow-composer"
+          >
+            <h2 className="text-base font-semibold text-ink">{title}</h2>
+            <p className="mt-2 text-sm text-ink-soft">{body}</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={onCancel}
+                disabled={busy}
+                className="rounded-lg border border-edge px-3.5 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                disabled={busy}
+                className="rounded-lg bg-failed px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {confirmLabel}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
