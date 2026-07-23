@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import dependency, events, jobs, redis_client, telemetry
+from .. import dependency, events, jobs, redis_client, telemetry, tree
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..db import get_session
@@ -423,6 +423,41 @@ async def stream_state(
         seq=0,
         final=message.status in Status.TERMINAL,
     )
+
+
+@router.get("/{conversation_id}/tree")
+async def conversation_tree(
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> dict:
+    """The conversation as a DAG: messages nested under their branch parent.
+
+    Linear chats return a single spine; a forked one returns the branches. The
+    edge is `parent_message_id`, the same edge chaining already sets.
+    """
+    await _load_conversation(session, conversation_id, user)
+    result = await session.execute(
+        select(Message).where(Message.conversation_id == conversation_id)
+    )
+    messages = list(result.scalars())
+    return {"roots": tree.build_tree(messages)}
+
+
+@router.get("/{conversation_id}/thread/{message_id}")
+async def conversation_thread(
+    conversation_id: str,
+    message_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> dict:
+    """One branch in isolation: the root-to-leaf path ending at `message_id`."""
+    await _load_conversation(session, conversation_id, user)
+    result = await session.execute(
+        select(Message).where(Message.conversation_id == conversation_id)
+    )
+    messages = list(result.scalars())
+    return {"thread": tree.thread_to(messages, message_id)}
 
 
 @router.get("/{conversation_id}/events")

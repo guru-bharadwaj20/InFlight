@@ -160,6 +160,10 @@ assertion.
   Redis Stream; the `messages` table is a projection of that append-only log
   (`GET /conversations/{id}/events` returns both), enabling audit and time-travel
   replay. `scripts.event_replay` asserts the projection equals the row.
+- **Branching DAG** — the model was always a DAG (`parent_message_id` edges);
+  `GET /conversations/{id}/tree` nests messages into branches and
+  `.../thread/{id}` returns one root-to-leaf branch in isolation. Cycle-safe by
+  construction.
 - **Resilient streaming** — a formalized at-least-once protocol with per-job
   sequence numbers, client-side dedup, and gap-healing resync, so a dropped or
   duplicated frame never renders as a hole. See
