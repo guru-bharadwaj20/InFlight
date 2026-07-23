@@ -78,12 +78,23 @@ in the job, never in the request.
 
 ## Results
 
-Two claims, two harnesses:
+Three claims, three harnesses:
 
 ```bash
-docker compose exec backend python -m scripts.eval_pipeline
-docker compose exec backend python -m scripts.load_test --jobs 24
+docker compose exec backend python -m scripts.concurrency_sim   # is it correct?
+docker compose exec backend python -m scripts.eval_pipeline     # does it know when to wait?
+docker compose exec backend python -m scripts.load_test --jobs 24  # does it hold under load?
 ```
+
+**Is the concurrency correct?** A randomised interleaving checker simulates
+thousands of schedules of concurrent prompts against a virtual microsecond clock,
+and asserts the invariants the design rests on — snapshot isolation (no job reads
+a message committed at or after its own cutoff), no torn reads, deadlock-free
+waiting, and a total, permutation-invariant display order (checked against the
+real `order_for_display`). It self-tests by reintroducing two real bug classes,
+including the `timestamptz(3)` collision this project actually hit, and failing if
+the checker can no longer catch them. 5000 runs, ~38k isolation-checked reads,
+zero violations.
 
 **Does it know when a prompt must wait?** 50 hand-labelled prompts
 ([eval/dependency_cases.json](eval/dependency_cases.json)), balanced 25/25, run
