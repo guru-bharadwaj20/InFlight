@@ -248,7 +248,7 @@ function UsageStrip({ messages, inFlight }: { messages: Message[]; inFlight: num
 }
 
 export default function ConversationPage({ params }: { params: { id: string } }) {
-  const { messages, title, loading, error, inFlight, send, regenerate, cancel } =
+  const { messages, title, loading, error, inFlight, send, regenerate, cancel, refresh } =
     useConversation(params.id);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -313,8 +313,14 @@ export default function ConversationPage({ params }: { params: { id: string } })
       <div className="px-6 pb-5">
         <div className="mx-auto max-w-3xl">
           {error && (
-            <p className="mb-2 rounded-lg border border-failed/30 bg-failed/5 px-3 py-2 text-sm text-failed">
-              {error}
+            <p className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-failed/30 bg-failed/5 px-3 py-2 text-sm text-failed">
+              <span className="min-w-0 flex-1">{error}</span>
+              <button
+                onClick={() => void refresh()}
+                className="shrink-0 rounded-md border border-failed/40 px-2 py-0.5 text-xs hover:bg-failed/10"
+              >
+                retry
+              </button>
             </p>
           )}
           <Composer
