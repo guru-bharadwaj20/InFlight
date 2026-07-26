@@ -18,6 +18,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
 
   redis:
     image: redis:7-alpine
@@ -31,6 +36,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   backend:
     build: ./backend
@@ -69,6 +79,11 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
 
   frontend:
     build: ./frontend
@@ -94,6 +109,11 @@ services:
       timeout: 3s
       start_period: 15s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
 
   # One-shot Prisma runner, so migrations work without a host Node install:
   #   docker compose --profile tools run --rm migrate
