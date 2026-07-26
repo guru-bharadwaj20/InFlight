@@ -29,7 +29,7 @@ import json
 import logging
 from typing import Any
 
-from . import redis_client
+from . import redis_client, telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,10 @@ async def append(
             _stream_key(conversation_id), fields, maxlen=STREAM_MAXLEN, approximate=True
         )
     except Exception:
+        # This is the only signal an append failure leaves: nothing re-raises,
+        # so without a counter the event log's reliability is invisible except
+        # by grepping logs.
+        telemetry.EVENT_APPEND_FAILURES.labels(event_type=event_type).inc()
         logger.exception("failed to append %s event for %s", event_type, conversation_id)
 
 

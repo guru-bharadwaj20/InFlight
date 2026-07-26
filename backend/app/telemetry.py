@@ -75,6 +75,11 @@ SLOT_WAIT_SECONDS = Histogram(
     "Time a job waited for a fair generation slot",
     buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
 )
+EVENT_APPEND_FAILURES = Counter(
+    "inflight_event_append_failures_total",
+    "Audit-log events that failed to append (swallowed so the job itself never fails)",
+    ["event_type"],
+)
 
 # Buckets chosen for the quantities this system actually produces: sub-second
 # TTFT, single-digit-second generations, and dependency waits up to the cap.
