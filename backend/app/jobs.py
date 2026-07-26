@@ -353,10 +353,16 @@ async def _resolve_dependency(
             job.dependency_reason = "nothing in flight to depend on"
         else:
             texts = [await _text_of(session, pid) for pid in pending]
+            prompt_text = await _text_of(session, job.prompt_message_id)
             telemetry.CLASSIFIER_CALLS.inc()
-            depends = await classify_dependency(
-                await _text_of(session, job.prompt_message_id), texts
-            )
+            # The classifier call can retry with backoff, so it must not hold a
+            # pooled DB connection idle-in-transaction for that whole time, and
+            # it must go through the same admission gate as generation or a
+            # burst of ambiguous prompts fires unbounded concurrent provider
+            # calls with none of the scheduler's fairness/rate-limit guarantees.
+            await session.commit()
+            async with scheduler.get_scheduler().slot(f"classifier:{conversation_id}"):
+                depends = await classify_dependency(prompt_text, texts)
             job.detected_dependency = (
                 Verdict.DEPENDENT if depends else Verdict.INDEPENDENT
             )
