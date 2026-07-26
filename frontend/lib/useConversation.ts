@@ -31,6 +31,21 @@ export function useConversation(conversationId: string) {
   // rather than a storm of them.
   const resyncing = useRef<Set<string>>(new Set());
 
+  // The app-router reuses this component instance across `/conversations/[id]`
+  // navigations, so nothing else clears state on a conversation switch. Without
+  // this, the previous conversation's messages stay on screen (and its job ids
+  // stay in the replay-cursor maps) until the new `refresh()` resolves, and a
+  // frame for the new conversation that lands first can be dropped as
+  // unmatched. Reset synchronously, before the refresh/socket effects run.
+  useEffect(() => {
+    setRaw([]);
+    setTitle(null);
+    setLoading(true);
+    setError(null);
+    lastSeq.current.clear();
+    resyncing.current.clear();
+  }, [conversationId]);
+
   const patch = useCallback((id: string, changes: Partial<Message>) => {
     setRaw((current) =>
       current.map((message) =>
