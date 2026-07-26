@@ -19,7 +19,6 @@ import { orderMessages } from "./ordering";
 export function useConversation(conversationId: string) {
   const [raw, setRaw] = useState<Message[]>([]);
   const [title, setTitle] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -174,7 +173,6 @@ export function useConversation(conversationId: string) {
 
       socket.onopen = () => {
         attempt = 0;
-        setConnected(true);
       };
 
       socket.onmessage = (event) => {
@@ -182,7 +180,6 @@ export function useConversation(conversationId: string) {
       };
 
       socket.onclose = () => {
-        setConnected(false);
         if (closed) return;
         // Back off, but stay responsive: a dropped socket mid-generation means
         // the user is watching a bubble that has stopped moving.
@@ -275,7 +272,6 @@ export function useConversation(conversationId: string) {
   return {
     messages,
     title,
-    connected,
     loading,
     error,
     inFlight,
