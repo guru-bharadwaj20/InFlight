@@ -244,6 +244,58 @@ async function fileToAttachment(file: File): Promise<Attachment | null> {
   };
 }
 
+// Only these hosts, never whatever a naive string-replace happens to produce:
+// pasting a URL on any other host used to still get fetched and piped into
+// the prompt with no confirmation of what actually resolved.
+const ALLOWED_GITHUB_HOSTS = new Set(["github.com", "raw.githubusercontent.com"]);
+const MAX_GITHUB_FETCH_BYTES = 200_000;
+
+function resolveGithubRawUrl(input: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new Error("that doesn't look like a URL");
+  }
+  if (!ALLOWED_GITHUB_HOSTS.has(parsed.hostname)) {
+    throw new Error("only github.com and raw.githubusercontent.com URLs are allowed");
+  }
+  if (parsed.hostname === "github.com") {
+    parsed.hostname = "raw.githubusercontent.com";
+    parsed.pathname = parsed.pathname.replace("/blob/", "/");
+  }
+  return parsed.toString();
+}
+
+// Stops reading once maxBytes is exceeded, aborting the fetch, rather than
+// downloading an arbitrarily large response fully into memory before
+// slicing it down afterward.
+async function readCapped(
+  res: Response,
+  maxBytes: number,
+  controller: AbortController
+): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return (await res.text()).slice(0, maxBytes);
+
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      const overshoot = received - maxBytes;
+      text += decoder.decode(value.slice(0, value.byteLength - overshoot));
+      controller.abort();
+      break;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text;
+}
+
 function AttachMenu({
   onImages,
   onGithub,
@@ -263,15 +315,14 @@ function AttachMenu({
 
   async function addGithub() {
     setOpen(false);
-    const url = window.prompt("Paste a GitHub file URL (blob or raw):");
-    if (!url) return;
+    const input = window.prompt("Paste a GitHub file URL (blob or raw):");
+    if (!input) return;
     try {
-      const raw = url
-        .replace("github.com", "raw.githubusercontent.com")
-        .replace("/blob/", "/");
-      const res = await fetch(raw);
+      const raw = resolveGithubRawUrl(input);
+      const controller = new AbortController();
+      const res = await fetch(raw, { signal: controller.signal });
       if (!res.ok) throw new Error(`could not fetch (${res.status})`);
-      const text = (await res.text()).slice(0, 12000);
+      const text = (await readCapped(res, MAX_GITHUB_FETCH_BYTES, controller)).slice(0, 12000);
       const name = raw.split("/").slice(-1)[0] || "file";
       onGithub(`Here is \`${name}\` for reference:\n\n\`\`\`\n${text}\n\`\`\`\n`);
     } catch (err) {
