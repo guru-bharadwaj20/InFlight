@@ -46,6 +46,10 @@ CLASSIFIER_CALLS = Counter(
     "inflight_classifier_calls_total",
     "Calls to the dependency classifier (the unsure cases only)",
 )
+CLASSIFIER_FAILURES = Counter(
+    "inflight_classifier_failures_total",
+    "Classifier calls that raised, forcing the fail-safe 'assume dependent' verdict",
+)
 SPECULATIONS = Counter(
     "inflight_speculations_total",
     "Dependent jobs that proceeded without waiting (speculative execution)",

@@ -185,6 +185,11 @@ async def classify_dependency(
     try:
         return await classify_dependency_strict(prompt, in_flight, model)
     except Exception:
+        # Indistinguishable from a real provider outage in the logs alone — a
+        # programming bug in the classifier path (e.g. a malformed schema
+        # response) reads identically to a 429/503 unless something separates
+        # them. This counter is that separation.
+        telemetry.CLASSIFIER_FAILURES.inc()
         logger.exception("dependency classifier failed; assuming dependent")
         return True
 
