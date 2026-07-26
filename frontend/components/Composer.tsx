@@ -196,15 +196,48 @@ export function Composer({
 
 /* ---- attach (+) menu: file/photo, camera, github ------------------------ */
 
+// A full-resolution photo (tens of MB) costs upload time and vision-model
+// tokens with no benefit the model can use beyond roughly this resolution
+// anyway, so every image attachment is capped to this on its longest edge
+// before it becomes a base64 JSON body.
+const MAX_IMAGE_DIMENSION = 1600;
+
+function downscaleDataUrl(dataUrl: string, maxDim: number): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      if (scale >= 1) {
+        resolve(dataUrl);
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => resolve(dataUrl); // fall back to the original rather than drop the attachment
+    img.src = dataUrl;
+  });
+}
+
 async function fileToAttachment(file: File): Promise<Attachment | null> {
   if (!file.type.startsWith("image/")) return null;
-  const preview = await new Promise<string>((resolve) => {
+  const original = await new Promise<string>((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.readAsDataURL(file);
   });
+  const preview = await downscaleDataUrl(original, MAX_IMAGE_DIMENSION);
+  const mime = preview.match(/^data:([^;]+);/)?.[1] ?? file.type;
   return {
-    mime_type: file.type,
+    mime_type: mime,
     data: preview.split(",")[1] ?? "",
     name: file.name,
     preview,
@@ -344,10 +377,14 @@ function CameraCapture({
   function shoot() {
     const video = videoRef.current;
     if (!video) return;
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_DIMENSION / Math.max(video.videoWidth, video.videoHeight)
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
     const preview = canvas.toDataURL("image/jpeg", 0.85);
     onCapture({
       mime_type: "image/jpeg",
