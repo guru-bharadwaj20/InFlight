@@ -215,7 +215,18 @@ function UsageStrip({ messages, inFlight }: { messages: Message[]; inFlight: num
   const [pricing, setPricing] = useState<Pricing | null>(null);
 
   useEffect(() => {
-    api.pricing().then(setPricing).catch(() => setPricing(null));
+    let cancelled = false;
+    api
+      .pricing()
+      .then((p) => {
+        if (!cancelled) setPricing(p);
+      })
+      .catch(() => {
+        if (!cancelled) setPricing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const usage = summarize(messages, pricing);

@@ -59,14 +59,19 @@ export function Composer({
 
   const [model, setModel] = useState<string>("");
   useEffect(() => {
+    let cancelled = false;
     api
       .models()
       .then((data) => {
+        if (cancelled) return;
         const saved = localStorage.getItem(MODEL_KEY);
         const valid = saved && data.models.some((m) => m.id === saved);
         setModel(valid ? saved! : data.default);
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function chooseModel(id: string) {
@@ -411,7 +416,17 @@ function ModelPicker({ model, onChange }: { model: string; onChange: (id: string
   const [models, setModels] = useState<ModelInfo[]>([]);
 
   useEffect(() => {
-    if (open && models.length === 0) api.models().then((d) => setModels(d.models)).catch(() => {});
+    if (!open || models.length > 0) return;
+    let cancelled = false;
+    api
+      .models()
+      .then((d) => {
+        if (!cancelled) setModels(d.models);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [open, models.length]);
 
   const label = models.find((m) => m.id === model)?.label ?? model ?? "model";

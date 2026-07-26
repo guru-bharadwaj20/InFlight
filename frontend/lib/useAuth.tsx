@@ -31,14 +31,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     api
       .me()
-      .then(setUser)
+      .then((u) => {
+        if (!cancelled) setUser(u);
+      })
       .catch(() => {
+        if (cancelled) return;
         auth.clear();
         setUser(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
