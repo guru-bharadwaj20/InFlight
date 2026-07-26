@@ -65,6 +65,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       USE_FAKE_LLM: ${USE_FAKE_LLM:-false}
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
+      # This compose file bind-mounts ./backend/app, so the reload watcher is
+      # what makes edits take effect. Set to "false" for any deployment that
+      # isn't this local dev setup.
+      UVICORN_RELOAD: ${UVICORN_RELOAD:-true}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
