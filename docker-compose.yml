@@ -63,12 +63,19 @@ services:
       # Labelled cases for the dependency eval, kept at the repo root so the
       # data set is visible without digging into the backend.
       - ./eval:/app/eval
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health/live', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
 
   frontend:
     build: ./frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       # Read by the browser, so these are host URLs — not compose service names.
       NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
@@ -81,6 +88,12 @@ services:
       # Keep the image's install and build cache from being shadowed by the bind mount.
       - frontend-node-modules:/app/node_modules
       - frontend-next-cache:/app/.next
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
 
   # One-shot Prisma runner, so migrations work without a host Node install:
   #   docker compose --profile tools run --rm migrate
