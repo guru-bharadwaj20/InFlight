@@ -18,6 +18,7 @@ import json
 import random
 import statistics
 import time
+import uuid
 
 import httpx
 import websockets
@@ -56,7 +57,25 @@ async def main() -> int:
 
     async with httpx.AsyncClient(base_url=BASE, timeout=300) as http:
         health = (await http.get("/health")).json()
-        cid = (await http.post("/conversations", json={"title": "load test"})).json()["id"]
+
+        # Every route but /health and /auth requires a bearer token, so sign up
+        # a fresh throwaway account for this run rather than hardcoding
+        # credentials that would collide across runs.
+        signup = await http.post(
+            "/auth/signup",
+            json={
+                "name": "Load Test",
+                "email": f"load-test-{uuid.uuid4().hex[:12]}@example.com",
+                "password": "load-test-password",
+            },
+        )
+        signup.raise_for_status()
+        token = signup.json()["token"]
+        http.headers["Authorization"] = f"Bearer {token}"
+
+        conv = await http.post("/conversations", json={"title": "load test"})
+        conv.raise_for_status()
+        cid = conv.json()["id"]
 
         print(f"=== load test — {args.jobs} prompts, gaps up to {args.max_gap:.2f}s ===")
         print(f"model {health['generation_model']}\n")
@@ -66,7 +85,9 @@ async def main() -> int:
         rejected = 0
         started_at: dict[str, float] = {}
 
-        async with websockets.connect(f"ws://localhost:8000/ws/conversations/{cid}") as ws:
+        async with websockets.connect(
+            f"ws://localhost:8000/ws/conversations/{cid}?token={token}"
+        ) as ws:
             t0 = time.perf_counter()
 
             async def submit_all() -> None:
