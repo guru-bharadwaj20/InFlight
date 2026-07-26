@@ -50,10 +50,10 @@ WORKER_ID = new_id()
 
 _control_task: asyncio.Task | None = None
 
-# Speculative jobs and whether they have already been rolled back once, so a
-# speculation is re-run at most a single time. Tracked in-process because the
-# job's own task performs the retry, in the same worker that ran it.
-_speculated: dict[str, bool] = {}
+# Job ids currently running as a speculation, so a speculation is re-run at
+# most a single time. Tracked in-process because the job's own task performs
+# the retry, in the same worker that ran it.
+_speculated: set[str] = set()
 
 
 def spawn(job_id: str, conversation_id: str) -> asyncio.Task:
@@ -394,7 +394,7 @@ async def _resolve_dependency(
         # wait cost real context. Marked INDEPENDENT so that check (which skips
         # jobs that waited) still considers this one; `_speculated` remembers the
         # truth so the outcome can be counted and rolled back at most once.
-        _speculated[job.id] = False
+        _speculated.add(job.id)
         job.detected_dependency = Verdict.INDEPENDENT
         job.dependency_source = Source.HEURISTIC
         job.dependency_reason = "speculated: detection said dependent, proceeding optimistically"
@@ -755,7 +755,7 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             telemetry.JOBS_ACTIVE.dec()
             # The re-run (if any) is INDEPENDENT, so dropping the flag here caps
             # speculative rollback at exactly one and prevents the map growing.
-            _speculated.pop(job_id, None)
+            _speculated.discard(job_id)
 
 
 __all__ = [
