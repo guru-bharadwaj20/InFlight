@@ -298,6 +298,9 @@ export function Sidebar() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set synchronously, unlike `creating` state, so two clicks dispatched in the
+  // same tick can't both pass the guard before the state update commits.
+  const creatingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -314,7 +317,8 @@ export function Sidebar() {
   }, [refresh, pathname]);
 
   async function startNew() {
-    if (creating) return;
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
     setError(null);
     try {
@@ -324,12 +328,14 @@ export function Sidebar() {
       router.push(`/conversations/${created.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      creatingRef.current = false;
       setCreating(false);
     }
   }
 
   // Clear the "creating" latch once the URL has actually changed.
   useEffect(() => {
+    creatingRef.current = false;
     setCreating(false);
   }, [pathname]);
 

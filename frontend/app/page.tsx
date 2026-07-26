@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Composer, type SubmitOptions } from "@/components/Composer";
 import { Logo } from "@/components/Logo";
@@ -28,10 +28,16 @@ export default function HomePage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // `starting` state is what the UI reads to disable itself, but two clicks
+  // dispatched before React commits that state update would both read the
+  // stale `false` and pass the guard. The ref is set synchronously, so it
+  // closes that window.
+  const startingRef = useRef(false);
 
   /** Start a chat the way every other assistant does: type, and it exists. */
   async function start(prompt: string, options?: SubmitOptions) {
-    if (starting) return;
+    if (startingRef.current) return;
+    startingRef.current = true;
     setStarting(true);
     try {
       const conversation = await api.createConversation(prompt.slice(0, 48));
@@ -42,6 +48,7 @@ export default function HomePage() {
       router.push(`/conversations/${conversation.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      startingRef.current = false;
       setStarting(false);
     }
   }
