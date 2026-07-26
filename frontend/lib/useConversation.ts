@@ -246,11 +246,17 @@ export function useConversation(conversationId: string) {
     async (messageId: string) => {
       try {
         await api.cancel(conversationId, messageId);
+        // The request succeeded server-side, but confirmation is a socket
+        // frame — which may not arrive for a while if the socket happens to
+        // be mid-reconnect backoff right now. Reflect the cancellation
+        // immediately instead of leaving the "stop" click looking like it did
+        // nothing; the eventual done/error frame still lands and reconciles.
+        patch(messageId, { status: "cancelled" });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [conversationId]
+    [conversationId, patch]
   );
 
   // Derived, not maintained in state: rows arrive from three places (initial
