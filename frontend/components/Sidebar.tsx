@@ -30,6 +30,7 @@ function ChatRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [draft, setDraft] = useState(conversation.title ?? "");
+  const [rowError, setRowError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,15 +41,23 @@ function ChatRow({
     setRenaming(false);
     const title = draft.trim();
     if (title && title !== conversation.title) {
-      await api.updateConversation(conversation.id, { title });
-      onChanged();
+      try {
+        await api.updateConversation(conversation.id, { title });
+        onChanged();
+      } catch (err) {
+        setRowError(err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
   async function toggleStar() {
     setMenuOpen(false);
-    await api.updateConversation(conversation.id, { starred: !conversation.starred });
-    onChanged();
+    try {
+      await api.updateConversation(conversation.id, { starred: !conversation.starred });
+      onChanged();
+    } catch (err) {
+      setRowError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function confirmDelete() {
@@ -56,6 +65,8 @@ function ChatRow({
     try {
       await api.deleteConversation(conversation.id);
       onDeleted();
+    } catch (err) {
+      setRowError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeleting(false);
       setConfirmingDelete(false);
@@ -149,6 +160,16 @@ function ChatRow({
         onConfirm={confirmDelete}
         onCancel={() => setConfirmingDelete(false)}
       />
+
+      {rowError && (
+        <p
+          className="mt-0.5 truncate px-2.5 text-[11px] text-failed"
+          onClick={() => setRowError(null)}
+          title={rowError}
+        >
+          {rowError}
+        </p>
+      )}
     </li>
   );
 }
