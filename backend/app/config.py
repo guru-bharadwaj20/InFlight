@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # Deliberately a cheaper/faster model than the generation one: the Stage 7
     # dependency check runs in the submit path, so its latency is a tax on every
     # ambiguous prompt.
-    classifier_model: str = "gemini-3.5-flash-lite"
+    classifier_model: str = "gemini-2.5-flash-lite"
 
     max_concurrent_jobs_per_conversation: int = 8
 

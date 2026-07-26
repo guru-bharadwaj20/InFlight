@@ -50,7 +50,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
-      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-gemini-3.5-flash-lite}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
       MAX_CONCURRENT_JOBS_PER_CONVERSATION: ${MAX_CONCURRENT_JOBS_PER_CONVERSATION:-8}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       USE_FAKE_LLM: ${USE_FAKE_LLM:-false}
