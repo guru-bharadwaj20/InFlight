@@ -41,6 +41,9 @@ jobs:
       # No provider in CI: the chaos/replay harnesses patch the model directly,
       # and this keeps anything else from reaching out.
       USE_FAKE_LLM: "true"
+      # test_auth_http.py's WebSocket test triggers app startup via TestClient;
+      # the app refuses to boot with the default JWT secret, so CI needs a real one.
+      JWT_SECRET: "ci-test-secret-not-for-production-use"
 
     steps:
       - uses: actions/checkout@v4

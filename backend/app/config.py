@@ -2,6 +2,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_JWT_SECRET = "dev-secret-change-me"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -33,8 +35,13 @@ class Settings(BaseSettings):
     # Signs the auth tokens. The default is fine for local development; set
     # JWT_SECRET in .env for anything that leaves this machine, or every token
     # is forgeable.
-    jwt_secret: str = "dev-secret-change-me"
+    jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_expire_hours: int = 24 * 7
+    # The default secret is fine for local dev but makes every token forgeable
+    # if it ever ships as-is. Startup refuses to boot with the default unless
+    # this is set, so leaving JWT_SECRET unset in a real deployment fails loud
+    # at process start rather than silently accepting forged tokens forever.
+    allow_default_jwt_secret: bool = False
 
     # Swaps in a deterministic local generator instead of calling Gemini. Off by
     # default and never inferred from a missing key — a silent fallback to fake

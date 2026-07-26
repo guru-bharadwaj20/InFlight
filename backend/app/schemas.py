@@ -2,6 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+# Bounds nothing else in the stack enforces: there is no ASGI-level request
+# body limit, so without these a single request can buffer an arbitrarily
+# large string/attachment in memory before validation even runs, independent
+# of max_concurrent_jobs_per_conversation (which only counts jobs, not bytes).
+MAX_PROMPT_CHARS = 20_000
+# ~8 MiB of decoded image bytes, expressed as the base64 length that produces it.
+MAX_ATTACHMENT_BASE64_CHARS = 8 * 1024 * 1024 * 4 // 3
+
 
 class SignupIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
@@ -91,11 +99,11 @@ class AttachmentIn(BaseModel):
     """One image sent with a prompt: a MIME type and base64-encoded bytes."""
 
     mime_type: str
-    data: str
+    data: str = Field(max_length=MAX_ATTACHMENT_BASE64_CHARS)
 
 
 class PromptCreate(BaseModel):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
     # Set to chain this prompt to an earlier message: a deterministic override
     # that makes the job wait, whatever dependency detection would have said.
     parent_message_id: str | None = None

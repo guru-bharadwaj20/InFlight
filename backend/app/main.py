@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import jobs, lifecycle, redis_client, scheduler
-from .config import get_settings
+from .config import DEFAULT_JWT_SECRET, get_settings
 from .db import dispose_engine, init_engine
 from .logging_config import configure_logging, request_id_ctx
 from .routers import auth, conversations, health, metrics, models, pricing, ws
@@ -15,6 +15,13 @@ from .routers import auth, conversations, health, metrics, models, pricing, ws
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
+    if settings.jwt_secret == DEFAULT_JWT_SECRET and not settings.allow_default_jwt_secret:
+        raise RuntimeError(
+            "JWT_SECRET is still the default dev value, which makes every auth "
+            "token forgeable. Set JWT_SECRET to a real secret, or set "
+            "ALLOW_DEFAULT_JWT_SECRET=true to run with the default anyway "
+            "(local dev only)."
+        )
     init_engine()
     redis_client.init_redis()
     # Listen for cross-worker control messages (cancellation) so a cancel that

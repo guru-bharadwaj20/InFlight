@@ -63,6 +63,10 @@ services:
       CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
       MAX_CONCURRENT_JOBS_PER_CONVERSATION: ${MAX_CONCURRENT_JOBS_PER_CONVERSATION:-8}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      # This compose file's whole purpose is local-dev defaults, so accept the
+      # default secret here; a real deployment should set JWT_SECRET instead
+      # of relying on this flag.
+      ALLOW_DEFAULT_JWT_SECRET: ${ALLOW_DEFAULT_JWT_SECRET:-true}
       USE_FAKE_LLM: ${USE_FAKE_LLM:-false}
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
       # This compose file bind-mounts ./backend/app, so the reload watcher is
