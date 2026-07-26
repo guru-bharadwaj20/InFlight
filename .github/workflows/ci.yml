@@ -63,6 +63,10 @@ jobs:
         working-directory: backend
         run: python -m scripts.check_schema
 
+      - name: HTTP auth/authz (signup, login, ownership, WS token gating)
+        working-directory: backend
+        run: pytest tests -q
+
       - name: Concurrency invariants (randomized interleavings)
         working-directory: backend
         run: python -m scripts.concurrency_sim --runs 5000
