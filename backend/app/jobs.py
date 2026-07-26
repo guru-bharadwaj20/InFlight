@@ -434,10 +434,20 @@ async def _resolve_dependency(
         await session.commit()
 
 
+# A stale-context conflict is only possible between answers close together in
+# time — the later one's cutoff has to predate the earlier one's commit, which
+# needs them to have been in flight around the same time. Bounding the scan to
+# the most recent answers keeps each completion's review O(1) in the size of
+# this window rather than O(n) in the conversation's entire lifetime, so the
+# check stays cheap in long-running conversations instead of getting slower
+# with every answer ever sent.
+_STALE_REVIEW_WINDOW = 50
+
+
 async def review_stale_context(session: AsyncSession, conversation_id: str) -> None:
     """Look for answers that ran without context they turned out to need.
 
-    Runs after every completion, over the whole conversation, because the pair
+    Runs after every completion, over the most recent answers, because the pair
     only becomes checkable once *both* halves are done — and which of the two
     finishes last is exactly what is unpredictable here. Scanning both
     directions each time is cheaper than tracking who is waiting on whom.
@@ -454,10 +464,12 @@ async def review_stale_context(session: AsyncSession, conversation_id: str) -> N
             Message.role == Role.ASSISTANT,
             Message.status == Status.COMPLETE,
         )
-        .order_by(Message.completed_at.asc())
+        .order_by(Message.completed_at.desc())
+        .limit(_STALE_REVIEW_WINDOW)
         .execution_options(populate_existing=True)
     )
     answers = list(result.scalars())
+    answers.reverse()  # back to ascending completed_at, which the scan below assumes
     if len(answers) < 2:
         return
 
