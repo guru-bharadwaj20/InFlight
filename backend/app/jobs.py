@@ -695,14 +695,24 @@ async def run_job(job_id: str, conversation_id: str) -> None:
         except asyncio.CancelledError:
             # Keep whatever was generated before the cancel — it is what the user
             # saw on screen, and discarding it would make the bubble jump.
-            await _finish(
-                session,
-                job,
-                conversation_id,
-                status=Status.CANCELLED,
-                content="".join(parts) or None,
-                error="cancelled",
-                usage=usage,
+            #
+            # Shielded: `_finish` commits the row, appends the event, and
+            # publishes the terminal frame in sequence. A second cancel arriving
+            # while drain()'s timeout re-cancels a straggling task must not
+            # interrupt that sequence partway — it would leave the row committed
+            # as cancelled with no matching event/frame ever sent. The shield
+            # lets this cleanup run to completion regardless of further cancels;
+            # the CancelledError we're already handling still propagates after.
+            await asyncio.shield(
+                _finish(
+                    session,
+                    job,
+                    conversation_id,
+                    status=Status.CANCELLED,
+                    content="".join(parts) or None,
+                    error="cancelled",
+                    usage=usage,
+                )
             )
             trace.finish("cancelled", usage.prompt_tokens, usage.completion_tokens)
             telemetry.JOBS_TOTAL.labels(outcome="cancelled").inc()
