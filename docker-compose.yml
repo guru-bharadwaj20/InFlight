@@ -94,7 +94,12 @@ services:
           memory: 1G
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # The Dockerfile's default (last) stage is now the production `runner`
+      # build; local dev needs the `dev` stage so the bind mount below
+      # actually hot-reloads instead of running a built, standalone server.
+      target: dev
     restart: unless-stopped
     depends_on:
       backend:
