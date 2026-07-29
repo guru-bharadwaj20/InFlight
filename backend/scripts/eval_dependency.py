@@ -10,15 +10,14 @@ worse than one that answers less and knows when it doesn't know.
 """
 
 import json
-from pathlib import Path
 
 from app.dependency import Verdict, evaluate
 
-CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
+from ._paths import case_file
 
 
 def main() -> int:
-    data = json.loads(CASES.read_text(encoding="utf-8"))
+    data = json.loads(case_file("dependency_cases.json").read_text(encoding="utf-8"))
     cases = data["cases"]
 
     decided = wrong = deferred = 0

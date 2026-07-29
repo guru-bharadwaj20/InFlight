@@ -11,18 +11,19 @@ Costs real tokens on the classifier model. Expect cents, not dollars.
 
 import asyncio
 import json
-from pathlib import Path
 
 from app.dependency import Verdict, evaluate
 from app.llm import classify_dependency_strict
 
-CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
+from ._paths import case_file
 
 # Each case carries the predecessor it would realistically follow.
 
 
 async def main() -> int:
-    cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
+    cases = json.loads(
+        case_file("dependency_cases.json").read_text(encoding="utf-8")
+    )["cases"]
     deferred = [c for c in cases if evaluate(c["prompt"]).verdict == Verdict.UNSURE]
 
     if not deferred:

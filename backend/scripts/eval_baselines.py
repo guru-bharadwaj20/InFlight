@@ -24,15 +24,15 @@ import argparse
 import asyncio
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 from app.dependency import Verdict, evaluate
 from app.llm import classify_dependency_strict
 
-EVAL_DIR = Path(__file__).resolve().parents[1] / "eval"
+from ._paths import case_file
+
 CASE_FILES = {
-    "base": EVAL_DIR / "dependency_cases.json",
-    "adversarial": EVAL_DIR / "adversarial_cases.json",
+    "base": "dependency_cases.json",
+    "adversarial": "adversarial_cases.json",
 }
 
 DEP, IND = Verdict.DEPENDENT, Verdict.INDEPENDENT
@@ -156,7 +156,9 @@ async def main() -> int:
                     help="also run the classifier-based strategies (costs quota)")
     args = ap.parse_args()
 
-    cases = json.loads(CASE_FILES[args.cases].read_text(encoding="utf-8"))["cases"]
+    cases = json.loads(
+        case_file(CASE_FILES[args.cases]).read_text(encoding="utf-8")
+    )["cases"]
     n_dep = sum(1 for c in cases if c["label"] == DEP)
     gate = asyncio.Semaphore(2)
 

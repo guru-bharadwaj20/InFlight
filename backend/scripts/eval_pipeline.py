@@ -16,12 +16,11 @@ import argparse
 import asyncio
 import json
 from collections import defaultdict
-from pathlib import Path
 
 from app.dependency import Verdict, evaluate
 from app.llm import classify_dependency_strict
 
-CASES = Path(__file__).resolve().parents[1] / "eval" / "dependency_cases.json"
+from ._paths import case_file
 
 # Each case carries its own plausible predecessor. Scoring a dependent prompt
 # against an unrelated in-flight turn measures the harness, not the classifier:
@@ -84,7 +83,9 @@ async def main() -> int:
                         help="skip the classifier; report what the free stage alone achieves")
     args = parser.parse_args()
 
-    cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
+    cases = json.loads(
+        case_file("dependency_cases.json").read_text(encoding="utf-8")
+    )["cases"]
     gate = asyncio.Semaphore(CONCURRENCY)
     results = await asyncio.gather(
         *[resolve(c, args.heuristic_only, gate) for c in cases]
