@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     # only when this process genuinely sits behind a proxy that sets it.
     trust_proxy_headers: bool = False
 
+    # Guards /metrics and /traces. Those endpoints expose job ids, conversation
+    # ids, models, token counts and timings for every recent generation across
+    # every user — no message text, but plenty about who is doing how much.
+    # Set this to a shared secret and give it to your scraper. Left empty, the
+    # endpoints fall back to requiring a signed-in user, so they are never simply
+    # open to the internet.
+    metrics_token: str = ""
+
     # Structured logging (app/logging_config.py). JSON by default so lines carry
     # request/job correlation ids for a log pipeline; set LOG_JSON=false for
     # readable lines in a terminal.
