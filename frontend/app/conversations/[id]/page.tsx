@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type Message, type MessageStatus, type Pricing } from "@/lib/api";
 import { useConversation } from "@/lib/useConversation";
@@ -89,7 +89,20 @@ function StatusChip({ message }: { message: Message }) {
   );
 }
 
-function Bubble({
+/**
+ * Memoised, and the memo is load-bearing rather than a micro-optimisation.
+ *
+ * A chunk frame replaces exactly one message object; every other row keeps its
+ * identity. Unmemoised, though, the parent re-rendering re-rendered all of them,
+ * and each carries framer-motion's `layout`, so every token triggered a layout
+ * measurement for every bubble on screen. With several answers streaming at once
+ * that is hundreds of measurements a second for rows that did not change.
+ *
+ * This only works because every prop below is referentially stable: the three
+ * callbacks are a state setter and two useCallbacks from useConversation, and
+ * `chained` is a boolean that changes for at most two bubbles at a time.
+ */
+const Bubble = memo(function Bubble({
   message,
   onChain,
   onRegenerate,
@@ -208,7 +221,7 @@ function Bubble({
       </div>
     </motion.li>
   );
-}
+});
 
 /** Transparency, never a gate: this reports spend and does not limit it. */
 function UsageStrip({ messages, inFlight }: { messages: Message[]; inFlight: number }) {
