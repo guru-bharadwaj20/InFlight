@@ -75,6 +75,21 @@ def describe_error(exc: BaseException, model: str | None = None) -> str:
     # the reader to the wrong setting.
     model = model or get_settings().generation_model
 
+    # Type checks come first. What an exception *is* outranks what its message
+    # happens to spell: these branches used to sit below the substring tests, so
+    # any breaker or empty-transcript error whose text merely contained "429" or
+    # "blocked" would have been described as something it was not.
+    if isinstance(exc, CircuitOpen):
+        return (
+            "The model provider is failing repeatedly, so requests are paused "
+            "briefly to let it recover. Try again in a moment."
+        )
+    if isinstance(exc, EmptyTranscript):
+        return (
+            "There was no prompt content to send to the model. Try sending the "
+            "message again with some text."
+        )
+
     if "RESOURCE_EXHAUSTED" in text or "429" in text:
         return (
             f"Rate limit reached for {model}. The free tier allows only a small "
@@ -93,11 +108,6 @@ def describe_error(exc: BaseException, model: str | None = None) -> str:
         )
     if "SAFETY" in text or "blocked" in text.lower():
         return "The provider blocked this response under its safety filters."
-    if isinstance(exc, CircuitOpen):
-        return (
-            "The model provider is failing repeatedly, so requests are paused "
-            "briefly to let it recover. Try again in a moment."
-        )
 
     return f"{type(exc).__name__}: {text[:200]}"
 
