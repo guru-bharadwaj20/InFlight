@@ -60,8 +60,12 @@ async def list_conversations(
     result = await session.execute(
         select(Conversation)
         .where(Conversation.user_id == user.id)
-        # Pinned chats first, then most recent — the order the sidebar renders.
-        .order_by(Conversation.starred.desc(), Conversation.created_at.desc())
+        # Pinned chats first, then most recently *active* — which is what a
+        # "Recents" rail means. Ordering by created_at made the list a fixed
+        # creation history that never reordered no matter how much a chat was
+        # used, so the chat you were talking to five seconds ago could sit at the
+        # bottom. send_prompt touches updated_at to keep this honest.
+        .order_by(Conversation.starred.desc(), Conversation.updated_at.desc())
         .limit(limit)
     )
     return list(result.scalars())
@@ -151,7 +155,7 @@ async def send_prompt(
     server is already willing to accept the next prompt immediately, and Stage 3
     removes the lock without touching this handler.
     """
-    await _load_conversation(session, conversation_id, user)
+    conversation = await _load_conversation(session, conversation_id, user)
 
     # Idempotency: two sends carrying the same key are one intent. The first
     # claims the key and creates the job; a duplicate returns the first result
@@ -252,6 +256,13 @@ async def send_prompt(
         await session.flush()  # assigns the prompt id the job needs to point at
         assistant_message.prompt_message_id = user_message.id
         session.add(assistant_message)
+        # Mark the conversation active. SQLAlchemy's `onupdate` only fires when
+        # some other column of this row changes, and adding a message changes no
+        # column of the conversation — so without this, updated_at only ever
+        # moved on a rename or a star, and "most recently used" was unknowable.
+        # Set from the prompt's own timestamp so the ordering key and the message
+        # it reflects agree exactly.
+        conversation.updated_at = submitted_at
         await session.commit()
     except Exception:
         # The slot was claimed before the rows existed, so a failed write must
