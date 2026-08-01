@@ -205,7 +205,7 @@ assertion.
 - **Realtime** — one WebSocket per client, multiplexed by `job_id`
 - **State / pub-sub** — Redis (job status + streaming chunk fan-out)
 - **Persistence** — Prisma + Postgres (SQLAlchemy on the backend)
-- **Models** — Gemini: `gemini-2.5-flash` for generation, `gemini-3.5-flash-lite`
+- **Models** — Gemini: `gemini-2.5-flash` for generation, `gemini-2.5-flash-lite`
   for the dependency classifier
 
 `prisma/schema.prisma` is the single source of truth for the database; the Python
@@ -229,11 +229,16 @@ Requirements: Docker (and Node 18+ on the host if you want to run migrations
 without the containerised runner).
 
 ```bash
-cp .env.example .env          # defaults work as-is for local development
-docker compose up -d --build  # postgres, redis, backend, frontend
-npm install                   # Prisma CLI (host-side)
-npx prisma migrate dev        # create/apply migrations
+cp .env.example .env                  # then set JWT_SECRET (see below)
+sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
+docker compose up -d --build          # postgres, redis, migrations, backend, frontend
 ```
+
+`JWT_SECRET` has no default: it signs every session token, so compose refuses to
+start without one rather than quietly running with a value published in this
+repository. Migrations now run as part of `up`, and the backend waits for them,
+so there is no separate step and no window where the stack is up but the schema
+is not.
 
 | Service | URL |
 | --- | --- |
@@ -244,11 +249,11 @@ npx prisma migrate dev        # create/apply migrations
 Set `GEMINI_API_KEY` in `.env` (from [AI Studio](https://aistudio.google.com/apikey))
 before chat will generate anything; without it the app still runs and prompts fail
 visibly on the bubble. Set `USE_FAKE_LLM=true` to exercise concurrency with
-predictable timing and no quota use. If you would rather not install Node locally,
-run migrations through the one-shot container instead:
+predictable timing and no quota use. Migrations run automatically on `up`; to
+re-run them by hand (after pulling new ones, say) without a host Node install:
 
 ```bash
-docker compose --profile tools run --rm migrate
+docker compose run --rm migrate
 ```
 
 `POSTGRES_PORT`, `REDIS_PORT`, `BACKEND_PORT`, and `FRONTEND_PORT` in `.env` remap
