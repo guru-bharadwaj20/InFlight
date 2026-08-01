@@ -147,7 +147,7 @@ async def test_conversation_ownership_is_not_visible_across_users(client: AsyncC
     assert owner_read.status_code == 200
 
 
-def test_websocket_rejects_missing_or_bad_token():
+def test_websocket_requires_a_valid_single_use_ticket():
     # Sync, using the plain TestClient rather than the async fixture -- WS
     # tests over httpx's ASGITransport aren't supported, and this is the
     # standard way to exercise a websocket route without a real socket.
@@ -162,30 +162,40 @@ def test_websocket_rejects_missing_or_bad_token():
         )
         assert signup.status_code == 201
         token = signup.json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
 
         created = sync_client.post(
-            "/conversations",
-            json={"title": "ws test"},
-            headers={"Authorization": f"Bearer {token}"},
+            "/conversations", json={"title": "ws test"}, headers=auth
         )
         assert created.status_code == 201
         conversation_id = created.json()["id"]
 
-        # No token at all.
+        # No ticket at all.
         with pytest.raises(Exception):
             with sync_client.websocket_connect(f"/ws/conversations/{conversation_id}"):
                 pass
 
-        # Garbage token.
+        # Garbage ticket.
         with pytest.raises(Exception):
             with sync_client.websocket_connect(
-                f"/ws/conversations/{conversation_id}?token=not-a-real-token"
+                f"/ws/conversations/{conversation_id}?ticket=not-a-real-ticket"
             ):
                 pass
 
-        # A valid token for a *different* user must not be able to subscribe
-        # to this conversation's stream.
-        intruder_signup = sync_client.post(
+        # The session token is no longer accepted in the URL. That is the whole
+        # point of the change: a week-long credential must not travel anywhere
+        # that gets logged.
+        with pytest.raises(Exception):
+            with sync_client.websocket_connect(
+                f"/ws/conversations/{conversation_id}?ticket={token}"
+            ):
+                pass
+
+        # Minting a ticket needs authentication.
+        assert sync_client.post("/auth/ws-ticket").status_code == 401
+
+        # A *different* user's ticket must not reach this conversation's stream.
+        intruder = sync_client.post(
             "/auth/signup",
             json={
                 "name": "WS Intruder",
@@ -193,15 +203,27 @@ def test_websocket_rejects_missing_or_bad_token():
                 "password": "correct-horse-battery",
             },
         )
-        intruder_token = intruder_signup.json()["token"]
+        intruder_ticket = sync_client.post(
+            "/auth/ws-ticket",
+            headers={"Authorization": f"Bearer {intruder.json()['token']}"},
+        ).json()["ticket"]
         with pytest.raises(Exception):
             with sync_client.websocket_connect(
-                f"/ws/conversations/{conversation_id}?token={intruder_token}"
+                f"/ws/conversations/{conversation_id}?ticket={intruder_ticket}"
             ):
                 pass
 
         # The rightful owner connects fine.
+        ticket = sync_client.post("/auth/ws-ticket", headers=auth).json()["ticket"]
         with sync_client.websocket_connect(
-            f"/ws/conversations/{conversation_id}?token={token}"
+            f"/ws/conversations/{conversation_id}?ticket={ticket}"
         ):
             pass
+
+        # And that ticket is spent -- replaying it is rejected, so a ticket
+        # captured from a log or the back button cannot reopen the stream.
+        with pytest.raises(Exception):
+            with sync_client.websocket_connect(
+                f"/ws/conversations/{conversation_id}?ticket={ticket}"
+            ):
+                pass

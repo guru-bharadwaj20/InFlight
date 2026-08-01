@@ -21,6 +21,12 @@ const ORPHAN_REFETCH_MS = 400;
 // ago, whose terminal frame already wrote the final content.
 const MAX_TRACKED_JOBS = 300;
 
+// Back off, but stay responsive: a dropped socket mid-generation means the user
+// is watching a bubble that has stopped moving.
+function backoffDelay(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 10000);
+}
+
 function rememberSeq(map: Map<string, number>, jobId: string, seq: number): void {
   map.set(jobId, seq);
   if (map.size <= MAX_TRACKED_JOBS) return;
@@ -254,9 +260,25 @@ export function useConversation(conversationId: string) {
     let attempt = 0;
     let closed = false;
 
-    const connect = () => {
+    const connect = async () => {
       if (closed) return;
-      socket = new WebSocket(conversationSocketUrl(conversationId));
+
+      let url: string;
+      try {
+        // Fetching a single-use ticket is now part of connecting. It can fail
+        // (offline, expired session), and if it does this must still back off
+        // and retry rather than leaving the socket permanently closed.
+        url = await conversationSocketUrl(conversationId);
+      } catch {
+        if (closed) return;
+        retry = setTimeout(() => void connect(), backoffDelay(attempt++));
+        return;
+      }
+      // The effect may have been torn down while the ticket was in flight.
+      // Opening the socket now would leak it past unmount.
+      if (closed) return;
+
+      socket = new WebSocket(url);
 
       socket.onopen = () => {
         attempt = 0;
@@ -268,16 +290,13 @@ export function useConversation(conversationId: string) {
 
       socket.onclose = () => {
         if (closed) return;
-        // Back off, but stay responsive: a dropped socket mid-generation means
-        // the user is watching a bubble that has stopped moving.
-        const delay = Math.min(1000 * 2 ** attempt++, 10000);
-        retry = setTimeout(connect, delay);
+        retry = setTimeout(() => void connect(), backoffDelay(attempt++));
       };
 
       socket.onerror = () => socket?.close();
     };
 
-    connect();
+    void connect();
 
     return () => {
       closed = true;

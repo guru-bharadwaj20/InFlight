@@ -94,6 +94,13 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class WsTicketOut(BaseModel):
+    """A single-use, short-lived credential for opening a WebSocket."""
+
+    ticket: str
+    expires_in: int
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

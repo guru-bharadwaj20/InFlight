@@ -290,6 +290,38 @@ async def release_idempotency(key: str) -> None:
     await get_redis().delete(f"idem:{key}")
 
 
+# --- WebSocket tickets ----------------------------------------------------
+#
+# A browser cannot set an Authorization header on a WebSocket, so the credential
+# has to travel in the URL. Sending the *session token* there put a week-long
+# credential into places URLs habitually end up: proxy and access logs, browser
+# history, Referer headers, error trackers. A ticket is the standard way out —
+# an opaque, single-use, seconds-long stand-in that is worthless by the time any
+# log containing it is read.
+
+WS_TICKET_TTL_SECONDS = 30
+
+
+def _ws_ticket_key(ticket: str) -> str:
+    return f"ws-ticket:{ticket}"
+
+
+async def create_ws_ticket(ticket: str, user_id: str) -> None:
+    await get_redis().set(_ws_ticket_key(ticket), user_id, ex=WS_TICKET_TTL_SECONDS)
+
+
+async def consume_ws_ticket(ticket: str) -> str | None:
+    """Redeem a ticket, returning its user id. Single use: a replay finds nothing.
+
+    GETDEL so the read and the invalidation are one atomic step — with a separate
+    GET then DELETE, two connections racing the same ticket could both be
+    admitted before either deleted it.
+    """
+    if not ticket:
+        return None
+    return await get_redis().getdel(_ws_ticket_key(ticket))
+
+
 # --- Streaming fan-out ----------------------------------------------------
 
 

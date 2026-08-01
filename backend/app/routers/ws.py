@@ -13,7 +13,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from .. import redis_client
 from ..db import session_factory
 from ..models import Conversation
-from ..security import decode_token
 
 router = APIRouter(tags=["ws"])
 
@@ -60,14 +59,23 @@ async def _watch_for_disconnect(websocket: WebSocket) -> None:
 
 @router.websocket("/ws/conversations/{conversation_id}")
 async def conversation_socket(
-    websocket: WebSocket, conversation_id: str, token: str = ""
+    websocket: WebSocket, conversation_id: str, ticket: str = ""
 ) -> None:
-    # A browser cannot set an Authorization header on a WebSocket, so the token
-    # arrives as a query parameter, and the connection is only accepted for the
-    # conversation's owner. The socket is read-only — it forwards frames the
-    # HTTP side already authorised — but gating it still keeps one user from
-    # subscribing to another's stream.
-    user_id = decode_token(token)
+    # A browser cannot set an Authorization header on a WebSocket, so something
+    # has to travel in the URL. It used to be the session token itself — a
+    # week-long credential, placed in the one part of a request that proxies log,
+    # browsers keep in history, and error trackers capture verbatim. Anyone who
+    # could read a log line could resume the session it belonged to.
+    #
+    # Now it is a ticket: minted by POST /auth/ws-ticket with the token in a
+    # header where it belongs, opaque, good for one connection and thirty
+    # seconds. Redeeming it is atomic, so it cannot be replayed even in the
+    # instant before it expires, and a leaked log line is worthless by the time
+    # anyone reads it.
+    #
+    # The socket is read-only — it forwards frames the HTTP side already
+    # authorised — but gating it still keeps one user off another's stream.
+    user_id = await redis_client.consume_ws_ticket(ticket)
     if not user_id:
         await websocket.close(code=4401)
         return

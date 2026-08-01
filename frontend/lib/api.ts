@@ -19,11 +19,22 @@ export const auth = {
   },
 };
 
-// A browser cannot attach an Authorization header to a WebSocket, so the token
-// rides along as a query parameter; the server validates it before accepting.
-export const conversationSocketUrl = (conversationId: string) => {
-  const token = auth.token ?? "";
-  return `${WS_BASE_URL}/conversations/${conversationId}?token=${encodeURIComponent(token)}`;
+/**
+ * URL for a conversation's WebSocket, authorised by a single-use ticket.
+ *
+ * A browser cannot attach an Authorization header to a WebSocket, so a
+ * credential has to go in the URL. It used to be the session token itself,
+ * which put a week-long credential everywhere URLs end up: proxy and access
+ * logs, browser history, Referer headers, error trackers.
+ *
+ * Instead this fetches a ticket over normal authenticated HTTP -- token in a
+ * header, where it belongs -- and puts that in the URL. The ticket is opaque,
+ * dies after one use, and expires in seconds, so a log line containing it is
+ * worthless by the time anyone reads it.
+ */
+export const conversationSocketUrl = async (conversationId: string) => {
+  const { ticket } = await api.wsTicket();
+  return `${WS_BASE_URL}/conversations/${conversationId}?ticket=${encodeURIComponent(ticket)}`;
 };
 
 export interface User {
@@ -35,6 +46,11 @@ export interface User {
 export interface AuthResult {
   token: string;
   user: User;
+}
+
+export interface WsTicket {
+  ticket: string;
+  expires_in: number;
 }
 
 /** Thrown on a 401 so callers (and the shell) can react to a dead session. */
@@ -242,6 +258,9 @@ export const api = {
     }),
 
   me: () => request<User>("/auth/me"),
+
+  /** Single-use, short-lived credential for opening a WebSocket. */
+  wsTicket: () => request<WsTicket>("/auth/ws-ticket", { method: "POST" }),
 
   /** Rates only — the client already holds the token counts to apply them to. */
   pricing: () => request<Pricing>("/pricing"),
