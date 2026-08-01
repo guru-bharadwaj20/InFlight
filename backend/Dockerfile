@@ -17,6 +17,15 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 COPY app ./app
+# The rigor harnesses (concurrency_sim, chaos_test, event_replay, check_schema,
+# the evals) and the HTTP tests. Only ./app was copied before, so every
+# documented `docker compose exec backend python -m scripts.*` command in the
+# README worked purely by accident of the compose bind mounts -- the built image
+# on its own could not run a single one of them, which is exactly the situation
+# where you most want to.
+COPY scripts ./scripts
+COPY tests ./tests
+COPY pytest.ini ./
 
 # Runs as a non-root user. The frontend's runner stage already dropped
 # privileges; this one stayed root for no reason, so a process that only ever
