@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
 # Bounds nothing else in the stack enforces: there is no ASGI-level request
 # body limit, so without these a single request can buffer an arbitrarily
@@ -11,15 +12,48 @@ MAX_PROMPT_CHARS = 20_000
 MAX_ATTACHMENT_BASE64_CHARS = 8 * 1024 * 1024 * 4 // 3
 
 
+# bcrypt refuses (and historically silently truncated) anything past 72 *bytes*.
+# Bounding the field by characters is not the same constraint: "é" is one
+# character and two bytes, so a 72-character accented password is 144 bytes and
+# reached security.hash_password's ValueError as an unhandled 500. Validating the
+# encoded length here turns that into the 422 it always should have been, and
+# keeps the API's stated limit and the hasher's real limit the same number.
+BCRYPT_MAX_PASSWORD_BYTES = 72
+
+
+def _fits_bcrypt(value: str) -> str:
+    if len(value.encode("utf-8")) > BCRYPT_MAX_PASSWORD_BYTES:
+        raise ValueError(
+            f"password must be at most {BCRYPT_MAX_PASSWORD_BYTES} bytes "
+            "(non-ASCII characters count for more than one)"
+        )
+    return value
+
+
+NewPassword = Annotated[
+    str,
+    Field(min_length=8, max_length=BCRYPT_MAX_PASSWORD_BYTES),
+    AfterValidator(_fits_bcrypt),
+]
+# Not `NewPassword`: an existing account may predate a tightened signup rule, and
+# the login form's job is to check a password, not to re-impose policy on one
+# that was already accepted.
+ExistingPassword = Annotated[
+    str,
+    Field(min_length=1, max_length=BCRYPT_MAX_PASSWORD_BYTES),
+    AfterValidator(_fits_bcrypt),
+]
+
+
 class SignupIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     email: EmailStr
-    password: str = Field(min_length=8, max_length=72)
+    password: NewPassword
 
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1, max_length=72)
+    password: ExistingPassword
 
 
 class UserOut(BaseModel):
