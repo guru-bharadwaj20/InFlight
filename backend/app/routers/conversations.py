@@ -27,6 +27,31 @@ from ..schemas import (
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
+# Long enough to tell two chats apart in a 16rem rail, short enough not to wrap.
+_TITLE_MAX_CHARS = 48
+
+
+def _derive_title(prompt: str) -> str | None:
+    """A sidebar label taken from the first prompt of an untitled chat.
+
+    Collapses whitespace so a pasted multi-line prompt does not become a title
+    full of newlines, and cuts on a word boundary when there is one near the
+    limit rather than slicing mid-word.
+    """
+    text = " ".join((prompt or "").split())
+    if not text:
+        return None
+    if len(text) <= _TITLE_MAX_CHARS:
+        return text
+    clipped = text[:_TITLE_MAX_CHARS]
+    cut = clipped.rfind(" ")
+    # Only honour the word boundary if it isn't so early that it throws most of
+    # the title away (a single very long token has no usable boundary).
+    if cut >= _TITLE_MAX_CHARS // 2:
+        clipped = clipped[:cut]
+    return clipped.rstrip(" ,.;:-") + "…"
+
+
 async def _load_conversation(
     session: AsyncSession, conversation_id: str, user: User
 ) -> Conversation:
@@ -263,6 +288,13 @@ async def send_prompt(
         # Set from the prompt's own timestamp so the ordering key and the message
         # it reflects agree exactly.
         conversation.updated_at = submitted_at
+        # Name an untitled chat after the prompt that opened it. Only the hero
+        # flow ever set a title, so every conversation started from the sidebar's
+        # "New chat" stayed "Untitled chat" for its whole life and the rail became
+        # a column of identical rows. Derived on first prompt, never overwritten:
+        # a title the user typed, or one already derived, is theirs to keep.
+        if not conversation.title:
+            conversation.title = _derive_title(payload.content)
         await session.commit()
     except Exception:
         # The slot was claimed before the rows existed, so a failed write must

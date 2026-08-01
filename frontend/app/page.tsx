@@ -40,7 +40,10 @@ export default function HomePage() {
     startingRef.current = true;
     setStarting(true);
     try {
-      const conversation = await api.createConversation(prompt.slice(0, 48));
+      // No title: the server derives one from the first prompt now, so both
+      // entry points get the same tidy label instead of this path alone getting
+      // a raw mid-word slice that kept any newlines the prompt contained.
+      const conversation = await api.createConversation(null);
       await api.sendPrompt(conversation.id, prompt, {
         model: options?.model,
         attachments: options?.attachments,
