@@ -2,26 +2,15 @@ import type { Message, Pricing } from "./api";
 
 const TOKENS_PER_UNIT = 1_000_000;
 
-export interface ModelUsage {
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-  answers: number;
-  /** Null when the model has no published rate — absent, not zero. */
-  costUsd: number | null;
-}
-
 export interface UsageSummary {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
   answers: number;
-  inFlight: number;
   /** Null if nothing priceable has completed yet. */
   costUsd: number | null;
   /** True when at least one completed answer used a model with no known rate. */
   partial: boolean;
-  byModel: ModelUsage[];
 }
 
 /**
@@ -36,19 +25,14 @@ export interface UsageSummary {
  * so an underestimate is never presented as exact.
  */
 export function summarize(messages: Message[], pricing: Pricing | null): UsageSummary {
-  const byModel = new Map<string, ModelUsage>();
   let promptTokens = 0;
   let completionTokens = 0;
   let answers = 0;
-  let inFlight = 0;
   let cost: number | null = null;
   let partial = false;
 
   for (const message of messages) {
-    if (message.status === "pending" || message.status === "streaming") {
-      inFlight++;
-      continue;
-    }
+    if (message.status === "pending" || message.status === "streaming") continue;
     // Usage is only meaningful once a job has reported it.
     if (message.prompt_tokens === null && message.completion_tokens === null) continue;
 
@@ -58,27 +42,12 @@ export function summarize(messages: Message[], pricing: Pricing | null): UsageSu
     completionTokens += c;
     answers++;
 
-    const model = message.model ?? "unknown";
-    const rate = pricing?.models[model] ?? null;
-    const entry = byModel.get(model) ?? {
-      model,
-      promptTokens: 0,
-      completionTokens: 0,
-      answers: 0,
-      costUsd: rate ? 0 : null,
-    };
-    entry.promptTokens += p;
-    entry.completionTokens += c;
-    entry.answers++;
-
+    const rate = pricing?.models[message.model ?? "unknown"] ?? null;
     if (rate) {
-      const spend = (p * rate.input + c * rate.output) / TOKENS_PER_UNIT;
-      entry.costUsd = (entry.costUsd ?? 0) + spend;
-      cost = (cost ?? 0) + spend;
+      cost = (cost ?? 0) + (p * rate.input + c * rate.output) / TOKENS_PER_UNIT;
     } else {
       partial = true;
     }
-    byModel.set(model, entry);
   }
 
   return {
@@ -86,10 +55,8 @@ export function summarize(messages: Message[], pricing: Pricing | null): UsageSu
     completionTokens,
     totalTokens: promptTokens + completionTokens,
     answers,
-    inFlight,
     costUsd: cost,
     partial,
-    byModel: [...byModel.values()].sort((a, b) => b.completionTokens - a.completionTokens),
   };
 }
 
