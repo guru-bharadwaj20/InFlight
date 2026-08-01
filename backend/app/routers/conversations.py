@@ -35,6 +35,10 @@ _TITLE_MAX_CHARS = 48
 # owner is gone, in which case the cascade is exactly the right outcome anyway.
 _DELETE_SETTLE_TIMEOUT = 2.0
 
+# How long a duplicate submission waits for the original to commit its rows.
+_IDEMPOTENCY_WAIT_SECONDS = 1.0
+_IDEMPOTENCY_POLL_SECONDS = 0.05
+
 
 def _derive_title(prompt: str) -> str | None:
     """A sidebar label taken from the first prompt of an untitled chat.
@@ -357,12 +361,21 @@ async def _idempotent_replay(session: AsyncSession, idem: str) -> PromptAccepted
     raw = await redis_client.get_idempotency(idem)
     if not raw or raw == "pending":
         # The original is mid-creation; give it a moment to commit its rows.
-        for _ in range(20):
-            await asyncio.sleep(0.05)
+        #
+        # Bounded and short. This runs inside the request, so every millisecond
+        # here is latency on a send -- and the thing being waited for is a commit
+        # that either happens almost immediately or is not happening at all,
+        # because the worker that claimed the key died. In the latter case the
+        # claim's own TTL clears it shortly, so a 409 here means "retry in a
+        # moment", not "blocked forever".
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _IDEMPOTENCY_WAIT_SECONDS
+        while loop.time() < deadline:
+            await asyncio.sleep(_IDEMPOTENCY_POLL_SECONDS)
             raw = await redis_client.get_idempotency(idem)
             if raw and raw != "pending":
                 break
-        else:
+        if not raw or raw == "pending":
             return None
     ids = json.loads(raw)
     user_msg = await session.get(Message, ids["u"])

@@ -258,11 +258,20 @@ async def active_job_count(conversation_id: str) -> int:
 
 IDEMPOTENCY_TTL_SECONDS = 60 * 60 * 24
 
+# The *claim* is short-lived, unlike the recorded result. A claim only has to
+# outlive the handful of milliseconds between reserving the key and committing
+# the rows. Giving it the full 24-hour result TTL meant that a worker dying in
+# that window left the key stuck on "pending" for a day: every honest retry of
+# that same request then waited a second for a result that was never coming and
+# got a 409, with no way to clear it. Expiring the claim quickly turns that
+# permanent wedge into a brief one that resolves itself.
+IDEMPOTENCY_CLAIM_TTL_SECONDS = 60
+
 
 async def claim_idempotency(key: str) -> bool:
     """Atomically claim an idempotency key (SET NX). False means it already exists."""
     got = await get_redis().set(
-        f"idem:{key}", "pending", nx=True, ex=IDEMPOTENCY_TTL_SECONDS
+        f"idem:{key}", "pending", nx=True, ex=IDEMPOTENCY_CLAIM_TTL_SECONDS
     )
     return bool(got)
 
