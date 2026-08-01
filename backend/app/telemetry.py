@@ -137,6 +137,10 @@ class Trace:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     ttft_ms: float | None = None
+    # Stamped by finish(). Without it, as_dict() reported the elapsed time at
+    # *serialization* — so a job that took 2s but finished ten minutes ago was
+    # rendered in /traces as having taken ten minutes.
+    total_ms: float | None = None
 
     def _now_ms(self) -> float:
         return (time.perf_counter() - self._t0) * 1000
@@ -168,7 +172,11 @@ class Trace:
         self.outcome = outcome
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
-        JOB_SECONDS.observe(self._now_ms() / 1000)
+        elapsed_ms = self._now_ms()
+        # Freeze the duration here. A trace lives in the ring buffer long after
+        # the job ends, and the clock must stop when the job does.
+        self.total_ms = round(elapsed_ms, 2)
+        JOB_SECONDS.observe(elapsed_ms / 1000)
 
     def as_dict(self) -> dict:
         return {
@@ -180,7 +188,9 @@ class Trace:
             "source": self.source,
             "outcome": self.outcome,
             "ttft_ms": self.ttft_ms,
-            "total_ms": round(self._now_ms(), 2),
+            # Frozen at finish(); still ticking for a job that is genuinely
+            # running, which is the only case where "now" is the right answer.
+            "total_ms": self.total_ms if self.total_ms is not None else round(self._now_ms(), 2),
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "spans": [{"name": s.name, "start_ms": s.start_ms, "dur_ms": s.dur_ms} for s in self.spans],
