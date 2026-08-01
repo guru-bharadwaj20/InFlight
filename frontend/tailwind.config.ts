@@ -33,17 +33,12 @@ const config: Config = {
           soft: withVar("--flight-soft"),
         },
         // Brand secondary — orange. The logo, the hero mark, highlight accents.
-        ember: {
-          DEFAULT: withVar("--ember"),
-          soft: withVar("--ember-soft"),
-        },
+        ember: withVar("--ember"),
         // Semantic, each used only for its conventional meaning.
         pending: withVar("--yellow"),
         streaming: withVar("--flight"),
         complete: withVar("--green"),
         failed: withVar("--red"),
-        // Kept as aliases so existing markup reads naturally.
-        paper: withVar("--bg"),
       },
       fontFamily: {
         serif: ["Georgia", "Cambria", "Times New Roman", "serif"],

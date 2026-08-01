@@ -107,7 +107,7 @@ FUNCTION_WORDS = {
     "i", "you", "we", "me", "us", "my", "your", "our", "please",
     "explain", "describe", "tell", "give", "show", "write", "list", "make",
     "not", "no", "yes", "all", "any", "some", "more", "most", "very", "just",
-    "use", "apply", "try", "now", "also", "please", "again", "instead",
+    "use", "apply", "try", "now", "also", "again", "instead",
     "compare", "rewrite", "refactor", "translate", "summarise", "summarize",
     "expand", "rephrase", "convert", "define", "draft", "name", "pick",
 }
