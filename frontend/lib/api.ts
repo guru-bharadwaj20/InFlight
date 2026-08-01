@@ -79,7 +79,8 @@ export interface Message {
   completed_at: string | null;
   /** The snapshot this job was stamped with at submit time. */
   context_cutoff: string;
-  dependency_mode: "auto" | "chained" | "independent";
+  /** What the user asked for; `detected_dependency` is what the system decided. */
+  dependency_mode: "auto" | "chained";
   parent_message_id: string | null;
   /** On an assistant row, the user message it is answering. */
   prompt_message_id: string | null;

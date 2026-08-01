@@ -44,9 +44,19 @@ class Status:
 
 
 class DependencyMode:
+    """What the *user* asked for, as opposed to what detection concluded.
+
+    Two values, not three. There was an INDEPENDENT member that was never
+    assigned, never compared against, and never reachable: nothing in the API
+    lets a caller declare a prompt independent, because AUTO already means "let
+    detection decide" and detection concluding independence is recorded in
+    detected_dependency, not here. Its presence implied a third mode the product
+    does not have — and it was mirrored into the Prisma docstring and the
+    TypeScript union, so all three layers advertised it.
+    """
+
     AUTO = "auto"
     CHAINED = "chained"
-    INDEPENDENT = "independent"
 
 
 class User(Base):

@@ -84,7 +84,9 @@ model Message {
   /// away and the two instants collide.
   contextCutoff DateTime @map("context_cutoff") @db.Timestamptz(6)
 
-  /// "auto" | "chained" | "independent" — manual override (Stage 8).
+  /// "auto" | "chained" — what the user asked for, not what detection decided.
+  /// "auto" lets detection choose; "chained" is the deterministic override the
+  /// UI's chain button sets.
   dependencyMode String @default("auto") @map("dependency_mode")
 
   /// Set when the user explicitly chained this prompt to an earlier one (Stage 8).
