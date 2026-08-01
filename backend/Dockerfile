@@ -12,6 +12,13 @@ RUN pip install -r requirements.txt
 
 COPY app ./app
 
+# Runs as a non-root user. The frontend's runner stage already dropped
+# privileges; this one stayed root for no reason, so a process that only ever
+# needs to read its own code and talk to Postgres and Redis ran as uid 0.
+RUN useradd --system --create-home --uid 10001 inflight \
+    && chown -R inflight:inflight /app
+USER inflight
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
