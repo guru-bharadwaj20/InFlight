@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, auth, Unauthorized, type User } from "./api";
+import { api, auth, type User } from "./api";
 
 interface AuthState {
   user: User | null;
@@ -81,4 +81,3 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
-export { Unauthorized };

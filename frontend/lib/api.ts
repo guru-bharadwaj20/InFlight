@@ -109,15 +109,6 @@ export interface ConversationDetail extends Conversation {
   messages: Message[];
 }
 
-export interface Health {
-  status: string;
-  postgres: string;
-  redis: string;
-  generation_model: string;
-  classifier_model: string;
-  gemini_key_configured: boolean;
-}
-
 export interface ModelRate {
   /** USD per 1M tokens. */
   input: number;
@@ -244,8 +235,6 @@ async function friendlyError(statusCode: number, body: string): Promise<string> 
 }
 
 export const api = {
-  health: () => request<Health>("/health"),
-
   signup: (name: string, email: string, password: string) =>
     request<AuthResult>("/auth/signup", {
       method: "POST",
@@ -344,11 +333,5 @@ export const api = {
     request<Message>(
       `/conversations/${conversationId}/messages/${messageId}/regenerate`,
       { method: "POST" }
-    ),
-
-  /** What a job stamped at `at` would be allowed to read as context. */
-  getContextSnapshot: (conversationId: string, at?: string) =>
-    request<Message[]>(
-      `/conversations/${conversationId}/context${at ? `?at=${encodeURIComponent(at)}` : ""}`
     ),
 };
