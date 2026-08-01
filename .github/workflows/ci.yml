@@ -74,6 +74,16 @@ jobs:
         working-directory: backend
         run: python -m scripts.concurrency_sim --runs 5000
 
+      # eval_dependency exits non-zero when the heuristic misclassifies a case it
+      # had previously decided correctly, so this is the only step that can
+      # actually fail on a dependency-detection regression. It was not in CI at
+      # all, despite costing nothing to run -- no provider, no quota.
+      - name: Dependency heuristic (regression gate)
+        working-directory: backend
+        run: python -m scripts.eval_dependency
+
+      # These two report metrics and always exit 0, so they inform rather than
+      # gate. Kept for the numbers in the log; the gate above is what fails.
       - name: Dependency baselines (free strategies, both case sets)
         working-directory: backend
         run: |
@@ -104,5 +114,15 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
+      # ESLint was configured (.eslintrc.json, a lint script) but never run by
+      # anything, so the config was decoration.
+      - name: Lint
+        run: npm run lint
       - name: Production build
         run: npm run build
+      # The runner stage is what a deployment actually builds, and nothing in CI
+      # exercised it -- which is how it came to reference a frontend/public
+      # directory that did not exist, breaking every production image build while
+      # the pipeline stayed green.
+      - name: Production image builds
+        run: docker build --target runner -t inflight-frontend:ci .
