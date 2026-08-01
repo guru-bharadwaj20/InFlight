@@ -27,8 +27,12 @@ from .config import get_settings
 JOB_TTL_SECONDS = 60 * 60
 
 
+# Shared with the reserve script's liveness probe, so the two can't drift apart.
+_JOB_KEY_PREFIX = "job:"
+
+
 def job_key(job_id: str) -> str:
-    return f"job:{job_id}"
+    return f"{_JOB_KEY_PREFIX}{job_id}"
 
 
 def job_buffer_key(job_id: str) -> str:
@@ -176,9 +180,35 @@ async def clear_job(
 # simultaneous sends all read the same count before any of them registers, and
 # every one of them is admitted. Redis runs a script atomically, so the test and
 # the insert cannot be interleaved.
+#
+# The membership count is taken over *live* jobs, not raw set members. Every
+# other key here expires, but this set only ever shrank by explicit SREM, so any
+# path that reserved a slot and then died before releasing it — a SIGKILL between
+# the reserve and the spawn, a worker lost mid-generation, a failed clear_job —
+# burned one of the conversation's slots for good. Eight such events and that
+# conversation returned 429 forever, with nothing in the UI able to clear it.
+#
+# A live job always has a `job:<id>` hash, refreshed with a TTL on every chunk,
+# so its absence is exactly the signal that a member is dead. Pruning them here
+# makes the cap self-healing: a leaked slot comes back on its own once the job
+# hash ages out, instead of never. The set is small (bounded by the limit in
+# normal operation), so SMEMBERS is cheap.
+#
+# Key names are built inside the script, which is fine on a single instance but
+# would need hash tags under Redis Cluster.
 _RESERVE_SCRIPT = """
-if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+local members = redis.call('SMEMBERS', KEYS[1])
+local live = 0
+for i = 1, #members do
+  if redis.call('EXISTS', ARGV[4] .. members[i]) == 1 then
+    live = live + 1
+  else
+    redis.call('SREM', KEYS[1], members[i])
+  end
+end
+if live >= tonumber(ARGV[2]) then return 0 end
 redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
 return 1
 """
 
@@ -186,13 +216,25 @@ return 1
 async def reserve_active_job(conversation_id: str, job_id: str, limit: int) -> bool:
     """Claim a concurrency slot, or return False if the conversation is full."""
     admitted = await get_redis().eval(
-        _RESERVE_SCRIPT, 1, conversation_active_key(conversation_id), job_id, limit
+        _RESERVE_SCRIPT,
+        1,
+        conversation_active_key(conversation_id),
+        job_id,
+        limit,
+        JOB_TTL_SECONDS,
+        _JOB_KEY_PREFIX,
     )
     return bool(admitted)
 
 
 async def register_active_job(conversation_id: str, job_id: str) -> None:
-    await get_redis().sadd(conversation_active_key(conversation_id), job_id)
+    key = conversation_active_key(conversation_id)
+    async with get_redis().pipeline(transaction=True) as pipe:
+        pipe.sadd(key, job_id)
+        # Bound the set's own lifetime too, so a conversation that goes quiet
+        # cannot leave the key behind indefinitely.
+        pipe.expire(key, JOB_TTL_SECONDS)
+        await pipe.execute()
 
 
 async def unregister_active_job(conversation_id: str, job_id: str) -> None:
