@@ -2,59 +2,10 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { memo, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api, type Message, type MessageStatus, type Pricing } from "@/lib/api";
 import { useConversation } from "@/lib/useConversation";
-import { useAuth } from "@/lib/useAuth";
 import { formatTokens, formatUsd, summarize } from "@/lib/usage";
 import { Composer, type SubmitOptions } from "@/components/Composer";
-
-/** Top-right account control: avatar opens a small menu whose only action is
- *  logging out. Replaces the old connection indicator in the header. */
-function AccountMenu() {
-  const { user, logout } = useAuth();
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-
-  if (!user) return null;
-
-  const initials =
-    ((user.name.trim().split(/\s+/)[0]?.[0] ?? "") +
-      (user.name.trim().split(/\s+/)[1]?.[0] ?? "")).toUpperCase() || "?";
-
-  return (
-    <div className="relative shrink-0">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Account"
-        className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-flight to-ember text-xs font-semibold text-white"
-      >
-        {initials}
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-xl border border-edge bg-surface py-1 shadow-composer">
-            <button
-              onClick={() => {
-                setOpen(false);
-                logout();
-                router.replace("/login");
-              }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-failed hover:bg-surface-2"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-                <path d="M13 14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1M9 10h8m0 0-2.5-2.5M17 10l-2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Log out
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 const STATUS_TEXT: Record<MessageStatus, string> = {
   pending: "text-pending",
@@ -309,7 +260,6 @@ export default function ConversationPage({ params }: { params: { id: string } })
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between gap-4 border-b border-edge px-6 py-3">
         <h1 className="truncate font-serif text-[17px]">{title ?? "Untitled chat"}</h1>
-        <AccountMenu />
       </header>
 
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
