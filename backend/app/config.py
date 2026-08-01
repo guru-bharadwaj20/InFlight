@@ -20,6 +20,20 @@ class Settings(BaseSettings):
 
     max_concurrent_jobs_per_conversation: int = 8
 
+    # How many settled exchanges a job may carry into its prompt. Without a bound
+    # the transcript is the whole conversation, so per-message cost grows with
+    # length (making total spend quadratic) and a long enough chat eventually
+    # exceeds the model's context window and fails outright. Trimming keeps the
+    # most recent exchanges, which are the ones a follow-up actually refers to.
+    # 0 disables the bound and restores the old unbounded behaviour.
+    max_context_exchanges: int = 40
+    # Second, independent bound: even a few exchanges can be enormous if the
+    # answers were long. Characters rather than tokens deliberately — a real
+    # tokenizer would mean shipping the provider's vocabulary and paying to run
+    # it on every job, to enforce a limit that only needs to be the right order
+    # of magnitude. ~4 chars/token puts this near 100k tokens.
+    max_context_chars: int = 400_000
+
     # Process-wide admission control (app/scheduler.py). The per-conversation cap
     # above stops one chat flooding itself; these bound the whole worker and keep
     # the provider approached at a sustainable rate. A generous default that does

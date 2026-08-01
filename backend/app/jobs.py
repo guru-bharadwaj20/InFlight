@@ -196,7 +196,16 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
     This job's own prompt is then appended last, which is what makes it the
     question rather than another piece of history.
     """
-    answered = await session.execute(
+    settings = get_settings()
+
+    # Newest-first with a LIMIT, then reversed, rather than loading every answer
+    # the conversation ever produced. Unbounded, the transcript was the whole
+    # history: per-message cost grew with conversation length (so total spend
+    # grew quadratically), every job's context assembly got slower for the life
+    # of the chat, and a long enough conversation eventually blew past the
+    # model's context window and simply stopped working. Keeping the most recent
+    # exchanges is the right trim — they are the ones a follow-up refers to.
+    query = (
         select(Message)
         .where(
             Message.conversation_id == job.conversation_id,
@@ -205,14 +214,19 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
             Message.completed_at.is_not(None),
             Message.completed_at < job.context_cutoff,
         )
-        .order_by(Message.completed_at.asc())
+        .order_by(Message.completed_at.desc())
         # A job that waited for a predecessor may already hold that row from
         # before it finished, when its content was still null. Without this the
         # WHERE clause would correctly select it and the identity map would
         # then hand back the stale, empty version.
         .execution_options(populate_existing=True)
     )
+    if settings.max_context_exchanges > 0:
+        query = query.limit(settings.max_context_exchanges)
+
+    answered = await session.execute(query)
     answers = list(answered.scalars())
+    answers.reverse()  # back to ascending completed_at, the order a transcript reads in
 
     prompt_ids = {a.prompt_message_id for a in answers if a.prompt_message_id}
     if job.prompt_message_id:
@@ -227,18 +241,46 @@ async def build_context(session: AsyncSession, job: Message) -> list[Turn]:
         )
         prompts = {m.id: m for m in found.scalars()}
 
-    turns: list[Turn] = []
-    for answer in answers:
+    # Assemble newest-first so the character budget drops the *oldest* exchanges,
+    # then flip back. A pair is kept or dropped whole: half an exchange in the
+    # transcript is worse than none of it.
+    history: list[Turn] = []
+    budget = settings.max_context_chars
+    spent = 0
+    dropped = 0
+
+    for answer in reversed(answers):
         prompt = prompts.get(answer.prompt_message_id or "")
+        pair = []
         if prompt is not None:
-            turns.append(Turn(role=Role.USER, content=prompt.content or ""))
-        turns.append(Turn(role=Role.ASSISTANT, content=answer.content or ""))
+            pair.append(Turn(role=Role.USER, content=prompt.content or ""))
+        pair.append(Turn(role=Role.ASSISTANT, content=answer.content or ""))
+
+        cost = sum(len(t.content) for t in pair)
+        if budget > 0 and spent + cost > budget and history:
+            # Out of room. `and history` keeps at least one exchange even if it
+            # alone exceeds the budget, so a conversation of one enormous answer
+            # still carries context rather than silently losing all of it.
+            dropped = len(answers) - (len(history) // 2)
+            break
+        spent += cost
+        pair.reverse()
+        history.extend(pair)
+
+    history.reverse()
+
+    if dropped:
+        logger.info(
+            "trimmed %d older exchange(s) from job %s's context to stay inside "
+            "the %d-character budget",
+            dropped, job.id, budget,
+        )
 
     own_prompt = prompts.get(job.prompt_message_id or "")
     if own_prompt is not None:
-        turns.append(Turn(role=Role.USER, content=own_prompt.content or ""))
+        history.append(Turn(role=Role.USER, content=own_prompt.content or ""))
 
-    return turns
+    return history
 
 
 async def _earlier_in_flight(session: AsyncSession, job: Message) -> list[str]:
