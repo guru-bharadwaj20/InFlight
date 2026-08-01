@@ -14,6 +14,22 @@ import { orderMessages } from "./ordering";
 // enough that a prompt sent from another tab appears promptly.
 const ORPHAN_REFETCH_MS = 400;
 
+// Cursors are kept per job and never expire on their own, so a long session in
+// one conversation accumulates one entry per answer ever streamed. Bound it.
+// Map preserves insertion order, so the oldest entries are the ones to shed —
+// and the only thing a shed cursor costs is dedup for a job that finished long
+// ago, whose terminal frame already wrote the final content.
+const MAX_TRACKED_JOBS = 300;
+
+function rememberSeq(map: Map<string, number>, jobId: string, seq: number): void {
+  map.set(jobId, seq);
+  if (map.size <= MAX_TRACKED_JOBS) return;
+  for (const key of map.keys()) {
+    if (map.size <= MAX_TRACKED_JOBS) break;
+    if (key !== jobId) map.delete(key);
+  }
+}
+
 /**
  * Owns the conversation's messages and the single socket feeding them.
  *
@@ -98,7 +114,7 @@ export function useConversation(conversationId: string) {
         const state = await api.streamState(conversationId, jobId);
         // A committed job's text is final: park the cursor high so any late
         // duplicate chunk is ignored.
-        lastSeq.current.set(jobId, state.final ? Number.MAX_SAFE_INTEGER : state.seq);
+        rememberSeq(lastSeq.current, jobId, state.final ? Number.MAX_SAFE_INTEGER : state.seq);
         patch(jobId, { content: state.text, status: state.status });
       } catch {
         /* a reconnect and its resume frame will heal it if this failed */
@@ -161,7 +177,7 @@ export function useConversation(conversationId: string) {
             void resync(frame.job_id);
             return;
           }
-          lastSeq.current.set(frame.job_id, frame.seq);
+          rememberSeq(lastSeq.current, frame.job_id, frame.seq);
           setRaw((current) =>
             current.map((message) =>
               message.id === frame.job_id
@@ -176,7 +192,7 @@ export function useConversation(conversationId: string) {
           break;
 
         case "resume":
-          lastSeq.current.set(frame.job_id, frame.seq);
+          rememberSeq(lastSeq.current, frame.job_id, frame.seq);
           patch(frame.job_id, { content: frame.text, status: frame.status });
           break;
 
