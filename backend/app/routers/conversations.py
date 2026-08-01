@@ -391,6 +391,14 @@ async def cancel_message(
         message.status = Status.CANCELLED
         message.error = "cancelled"
         await session.commit()
+        # Append the terminal event, exactly as jobs._finish would have. Without
+        # it this path mutated the row behind the log's back: the projection in
+        # GET /events would still show the job streaming, and the table would
+        # stop being reconstructible from the log — which is the one property
+        # that makes this event sourcing rather than logging.
+        await events.append(
+            conversation_id, events.CANCELLED, message_id, content=message.content
+        )
         await redis_client.clear_job(message_id, conversation_id)
         await redis_client.publish(
             conversation_id,
