@@ -258,9 +258,22 @@ export default function ConversationPage({ params }: { params: { id: string } })
   // Only follow the tail if already at it. With several answers growing at once,
   // yanking the viewport down on every chunk would make reading anything above
   // impossible.
+  //
+  // `messages` gets a new identity on every streamed token, so this effect fires
+  // dozens of times a second while answers are in flight. Requesting a *smooth*
+  // scroll that often queues animations faster than they can finish, and they
+  // fight each other -- the single biggest source of visible jank during
+  // concurrent generation. Coalesce into one frame-aligned scroll, and keep the
+  // smooth easing only for the rare discrete jump (a new bubble), using an
+  // instant scroll while text is actively streaming.
+  const streaming = inFlight > 0;
   useEffect(() => {
-    if (stick) bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, stick]);
+    if (!stick) return;
+    const frame = requestAnimationFrame(() => {
+      bottom.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, stick, streaming]);
 
   function onScroll() {
     const el = scroller.current;
