@@ -249,11 +249,49 @@ OVERLAP_THRESHOLD = 2
 MIN_TOPIC_WORD = 4
 
 
-def _topic_words(text: str) -> set[str]:
+def topic_words(text: str) -> set[str]:
+    """Content words worth comparing between a prompt and an answer.
+
+    Public so a caller running the retrospective check over a window of answers
+    can tokenise each answer once instead of once per pair.
+    """
     return {
         t for t in _tokens(text)
         if len(t) >= MIN_TOPIC_WORD and t not in FUNCTION_WORDS
     }
+
+
+_topic_words = topic_words  # existing internal callers
+
+
+def prepare_retrospective(prompt: str) -> tuple[Detection, set[str]] | None:
+    """The per-prompt half of `retrospective_conflict`, done once.
+
+    `evaluate` runs twenty-odd regexes and tokenises the whole prompt, and
+    `_topic_words` tokenises it again. Neither depends on the answer being
+    compared against, so doing them inside a pairwise loop repeats the same work
+    once per candidate. Returns None when the prompt cannot conflict with
+    anything, which lets a caller skip it entirely.
+    """
+    detection = evaluate(prompt)
+    if detection.verdict == Verdict.INDEPENDENT and detection.reason == NO_REFERENCES:
+        return None
+    return detection, _topic_words(prompt)
+
+
+def retrospective_match(
+    prepared: tuple[Detection, set[str]], answer_topics: set[str]
+) -> str | None:
+    """The per-pair half: a set intersection, and nothing else."""
+    detection, prompt_topics = prepared
+    shared = prompt_topics & answer_topics
+    if len(shared) < OVERLAP_THRESHOLD:
+        return None
+    terms = ", ".join(sorted(shared)[:3])
+    return (
+        f"this prompt refers to something ({detection.matched or 'a reference'}) "
+        f"and the answer it could not see discusses {terms}"
+    )
 
 
 def retrospective_conflict(prompt: str, answer: str) -> str | None:
@@ -269,16 +307,7 @@ def retrospective_conflict(prompt: str, answer: str) -> str | None:
     This only ever produces a dismissible nudge — it never re-runs anything on
     its own, because a check this crude should not be spending tokens unasked.
     """
-    detection = evaluate(prompt)
-    if detection.verdict == Verdict.INDEPENDENT and detection.reason == NO_REFERENCES:
+    prepared = prepare_retrospective(prompt)
+    if prepared is None:
         return None
-
-    shared = _topic_words(prompt) & _topic_words(answer)
-    if len(shared) < OVERLAP_THRESHOLD:
-        return None
-
-    terms = ", ".join(sorted(shared)[:3])
-    return (
-        f"this prompt refers to something ({detection.matched or 'a reference'}) "
-        f"and the answer it could not see discusses {terms}"
-    )
+    return retrospective_match(prepared, _topic_words(answer))

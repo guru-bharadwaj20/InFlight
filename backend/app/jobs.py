@@ -552,12 +552,34 @@ async def review_stale_context(session: AsyncSession, conversation_id: str) -> N
         )
         prompts = {r[0]: r[1] or "" for r in rows.all()}
 
+    # Tokenise each answer once, lazily. The pairwise loop below is quadratic in
+    # the window, so anything done inside it is done up to _STALE_REVIEW_WINDOW
+    # squared times — 2500 tokenisations of the same handful of strings, on the
+    # hot path, after every single completion.
+    answer_topics: dict[str, set[str]] = {}
+
+    def topics_of(message: Message) -> set[str]:
+        cached = answer_topics.get(message.id)
+        if cached is None:
+            cached = dependency.topic_words(message.content or "")
+            answer_topics[message.id] = cached
+        return cached
+
     flagged = []
     for later in answers:
         if later.stale_context_reason or later.detected_dependency == Verdict.DEPENDENT:
             continue
         prompt = prompts.get(later.prompt_message_id or "")
         if not prompt:
+            continue
+
+        # The ~20 regexes and two tokenisations that judge the prompt do not
+        # depend on which answer it is compared against, so they run once per
+        # candidate rather than once per pair. None means this prompt refers to
+        # nothing and cannot conflict with any answer, so the inner loop is
+        # skipped outright — which is the common case.
+        prepared = dependency.prepare_retrospective(prompt)
+        if prepared is None:
             continue
 
         for earlier in answers:
@@ -569,7 +591,7 @@ async def review_stale_context(session: AsyncSession, conversation_id: str) -> N
             if earlier.submitted_at > later.submitted_at:
                 continue
 
-            reason = dependency.retrospective_conflict(prompt, earlier.content or "")
+            reason = dependency.retrospective_match(prepared, topics_of(earlier))
             if reason:
                 later.stale_context_reason = reason
                 later.stale_context_source_id = earlier.id
