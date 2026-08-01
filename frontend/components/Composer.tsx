@@ -57,13 +57,19 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
   }, [draft]);
 
+  // One fetch, one copy. This used to load the list here to resolve the default,
+  // and ModelPicker loaded it again into its own state the first time it opened
+  // — two round trips for identical data, a needless "Loading models…" on an
+  // already-populated picker, and two states that could disagree.
   const [model, setModel] = useState<string>("");
+  const [models, setModels] = useState<ModelInfo[]>([]);
   useEffect(() => {
     let cancelled = false;
     api
       .models()
       .then((data) => {
         if (cancelled) return;
+        setModels(data.models);
         const saved = localStorage.getItem(MODEL_KEY);
         const valid = saved && data.models.some((m) => m.id === saved);
         setModel(valid ? saved! : data.default);
@@ -137,7 +143,7 @@ export function Composer({
         />
 
         <div className="ml-auto flex items-center gap-1">
-          <ModelPicker model={model} onChange={chooseModel} />
+          <ModelPicker model={model} models={models} onChange={chooseModel} />
 
           {speech.supported && (
             <>
@@ -499,23 +505,16 @@ function MenuRow({
 
 /* ---- model picker ------------------------------------------------------- */
 
-function ModelPicker({ model, onChange }: { model: string; onChange: (id: string) => void }) {
+function ModelPicker({
+  model,
+  models,
+  onChange,
+}: {
+  model: string;
+  models: ModelInfo[];
+  onChange: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-
-  useEffect(() => {
-    if (!open || models.length > 0) return;
-    let cancelled = false;
-    api
-      .models()
-      .then((d) => {
-        if (!cancelled) setModels(d.models);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, models.length]);
 
   const label = models.find((m) => m.id === model)?.label ?? model ?? "model";
 
