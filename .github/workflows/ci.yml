@@ -62,6 +62,12 @@ jobs:
       - name: Install backend deps
         run: pip install -r backend/requirements.txt
 
+      # First, because it needs no services and finishes in about a second, so a
+      # broken pure function fails the build before anything slow has started.
+      - name: Unit tests (pure logic, no services)
+        working-directory: backend
+        run: python -m pytest tests/test_units.py -q
+
       - name: Schema mirror matches the database
         working-directory: backend
         run: python -m scripts.check_schema

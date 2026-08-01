@@ -14,10 +14,45 @@ job. Run with: pytest backend/tests -q
 import uuid
 
 import pytest
+import redis.asyncio as aioredis
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from app.config import get_settings
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+async def clear_rate_limits():
+    """Stop these tests throttling each other.
+
+    Every test here signs up through the same ASGI transport, which presents a
+    single client address, so they all share one rate-limit bucket. Without this
+    the suite exhausts the signup limit partway through and later tests fail on a
+    429 that has nothing to do with what they assert.
+
+    The limits stay *enabled* -- the dependency and its Redis round trip still run
+    on every request, so the path keeps being exercised. Only the accumulated
+    counts are reset.
+
+    Scoped to this module, not conftest, so the pure-logic suite needs no Redis.
+    Uses a throwaway connection rather than the app's pooled client: touching the
+    module-global during setup would leave it bound to this fixture's event loop
+    and break the sync WebSocket test, which drives the app on its own portal
+    loop and expects the globals untouched.
+    """
+    async def clear() -> None:
+        client = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            keys = await client.keys("ratelimit:*")
+            if keys:
+                await client.delete(*keys)
+        finally:
+            await client.aclose()
+
+    await clear()
+    yield
+    await clear()
 
 
 def _unique_email() -> str:
