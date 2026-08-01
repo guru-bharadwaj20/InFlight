@@ -55,10 +55,53 @@ def _fits_bcrypt(value: str) -> str:
     return value
 
 
+# The passwords that actually get chosen and actually get guessed. A full
+# breach-corpus check is the right long-term answer (and is what
+# TRUST_PROXY_HEADERS-style config would gate), but a short embedded list
+# removes the overwhelming majority of real-world weak choices for no
+# dependency, no network call, and no latency.
+_COMMON_PASSWORDS = frozenset(
+    {
+        "password", "password1", "password123", "passw0rd", "12345678",
+        "123456789", "1234567890", "qwertyui", "qwerty123", "iloveyou",
+        "sunshine", "princess", "football", "baseball", "welcome1",
+        "admin123", "letmein1", "trustno1", "starwars", "whatever",
+        "superman", "michael1", "dragon123", "monkey123", "abc12345",
+        "changeme", "secret123", "welcome123", "p@ssw0rd", "qwertyuiop",
+    }
+)
+
+# Eight identical characters clears min_length=8 while carrying almost no
+# entropy. This is not a character-class rule -- those mostly teach people to
+# append "1!" -- just a floor on variety.
+_MIN_DISTINCT_CHARS = 5
+
+
+def _strong_enough(value: str) -> str:
+    """Reject the passwords that are weak in a way length cannot detect.
+
+    min_length=8 was the only check, so "12345678", "password", and "aaaaaaaa"
+    were all accepted -- and rate limiting slows an online guesser without
+    helping at all if the password is the first thing anyone tries.
+    """
+    if value.lower() in _COMMON_PASSWORDS:
+        raise ValueError(
+            "this password is one of the most commonly used ones; pick something less guessable"
+        )
+    if len(set(value)) < _MIN_DISTINCT_CHARS:
+        raise ValueError(
+            f"password must use at least {_MIN_DISTINCT_CHARS} different characters"
+        )
+    if value.isdigit():
+        raise ValueError("password must not be only digits")
+    return value
+
+
 NewPassword = Annotated[
     str,
     Field(min_length=8, max_length=BCRYPT_MAX_PASSWORD_BYTES),
     AfterValidator(_fits_bcrypt),
+    AfterValidator(_strong_enough),
 ]
 # Not `NewPassword`: an existing account may predate a tightened signup rule, and
 # the login form's job is to check a password, not to re-impose policy on one
