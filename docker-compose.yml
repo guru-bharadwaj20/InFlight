@@ -53,6 +53,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Do not start serving until the schema exists.
+      migrate:
+        condition: service_completed_successfully
     environment:
       # Inside the compose network the services are reachable by name, so these
       # override the localhost URLs in .env (which the host-side Prisma CLI uses).
@@ -71,7 +74,7 @@ services:
       #
       # Generate one with:  openssl rand -hex 32
       # and put it in .env. Failing to start is the correct outcome otherwise.
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env - generate with: openssl rand -hex 32}
+      JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET in .env - generate one with 'openssl rand -hex 32'}"
       ALLOW_DEFAULT_JWT_SECRET: ${ALLOW_DEFAULT_JWT_SECRET:-false}
       # Optimistic concurrency: a dependent prompt generates immediately and
       # re-runs only if the retrospective check confirms it missed context. The
@@ -142,13 +145,19 @@ services:
           cpus: "1"
           memory: 1G
 
-  # One-shot Prisma runner, so migrations work without a host Node install:
-  #   docker compose --profile tools run --rm migrate
+  # One-shot Prisma runner. Runs as part of `docker compose up`, not behind a
+  # profile, because the backend cannot serve a single request against an
+  # unmigrated database.
+  #
+  # It used to be opt-in, which meant `docker compose up` on a clean checkout
+  # brought up a stack that 500ed on every request until you separately ran
+  # migrations -- and nothing showed it: /health/live does not touch Postgres, so
+  # the backend reported healthy and the frontend's depends_on was satisfied by a
+  # backend that could not answer anything.
   #
   # Debian, not Alpine: Prisma's schema engine is a native binary that needs
   # glibc and OpenSSL, and fails to start on musl.
   migrate:
-    profiles: ["tools"]
     image: node:22-slim
     working_dir: /workspace
     depends_on:
