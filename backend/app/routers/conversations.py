@@ -540,7 +540,18 @@ async def conversation_events(
     """
     await _load_conversation(session, conversation_id, user)
     log = await events.read(conversation_id)
-    return {"count": len(log), "events": log, "projected": events.project(log)}
+    stored = await events.length(conversation_id)
+    return {
+        "count": len(log),
+        # The stream is capped at events.STREAM_MAXLEN, so a very long-lived
+        # conversation has had its oldest entries trimmed. Say so rather than
+        # letting a caller read `projected` as the whole truth: over a trimmed
+        # log the projection is a fold of the surviving suffix, not of history.
+        "stored": stored,
+        "truncated": stored > len(log),
+        "events": log,
+        "projected": events.project(log),
+    }
 
 
 @router.get("/{conversation_id}/context", response_model=list[MessageOut])

@@ -74,22 +74,58 @@ async def append(
         logger.exception("failed to append %s event for %s", event_type, conversation_id)
 
 
-async def read(conversation_id: str, count: int = 1000) -> list[dict]:
-    """The conversation's events in append order, oldest first."""
-    entries = await redis_client.get_redis().xrange(
-        _stream_key(conversation_id), min="-", max="+", count=count
-    )
-    events = []
-    for entry_id, fields in entries:
-        events.append(
-            {
-                "id": entry_id,
-                "type": fields.get("type"),
-                "message_id": fields.get("message_id") or None,
-                "data": json.loads(fields.get("data") or "{}"),
-            }
+# How many entries to pull per XRANGE round trip while paging. Bounded so one
+# conversation's history never arrives as a single multi-megabyte reply.
+_PAGE_SIZE = 1000
+
+
+async def read(conversation_id: str, count: int = STREAM_MAXLEN) -> list[dict]:
+    """The conversation's events in append order, oldest first.
+
+    Pages rather than taking a single capped XRANGE. The old default read the
+    first 1000 entries of a stream that holds up to STREAM_MAXLEN (10_000), so
+    any conversation past a thousand events had its log silently cut to the
+    *oldest* thousand — and `project()` then folded that prefix into a read model
+    that could not match the current rows. An endpoint whose whole point is
+    showing the table is a projection of the log must not project a fragment of
+    it without saying so.
+    """
+    client = redis_client.get_redis()
+    events: list[dict] = []
+    cursor = "-"
+
+    while len(events) < count:
+        batch = await client.xrange(
+            _stream_key(conversation_id),
+            min=cursor,
+            max="+",
+            count=min(_PAGE_SIZE, count - len(events)),
         )
+        if not batch:
+            break
+        for entry_id, fields in batch:
+            events.append(
+                {
+                    "id": entry_id,
+                    "type": fields.get("type"),
+                    "message_id": fields.get("message_id") or None,
+                    "data": json.loads(fields.get("data") or "{}"),
+                }
+            )
+        # Exclusive ranges ("(<id>") need Redis 6.2+; the pinned image is 7.
+        cursor = f"({batch[-1][0]}"
+
     return events
+
+
+async def length(conversation_id: str) -> int:
+    """How many events the stream actually holds, so a caller can tell whether
+    what it read is the whole history or a truncated view of it."""
+    try:
+        return int(await redis_client.get_redis().xlen(_stream_key(conversation_id)))
+    except Exception:
+        logger.exception("failed to read stream length for %s", conversation_id)
+        return 0
 
 
 def project(events: list[dict]) -> dict[str, dict]:
