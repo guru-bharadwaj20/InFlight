@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Conversation } from "@/lib/api";
+import { initials } from "@/lib/initials";
 import { useAuth } from "@/lib/useAuth";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./theme";
@@ -388,11 +389,6 @@ export function Sidebar() {
       <UserFooter />
     </aside>
   );
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
 /** Bottom-left profile — name and avatar only, no plan or billing. */
