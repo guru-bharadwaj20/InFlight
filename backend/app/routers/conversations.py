@@ -425,6 +425,11 @@ async def _await_terminal(
             select(Message.status).where(Message.id == message_id)
         )
         current = result.scalar_one_or_none()
+        # End the read transaction before sleeping, so this poll does not hold a
+        # pooled connection idle-in-transaction for the whole timeout. Safe to
+        # commit: nothing is pending, and expire_on_commit=False keeps `message`
+        # usable in the caller.
+        await session.commit()
         if current is None or current in Status.TERMINAL:
             return True
         if asyncio.get_running_loop().time() > deadline:

@@ -299,6 +299,27 @@ async def _chain_target(session: AsyncSession, job: Message) -> str | None:
     return answer.scalars().first() or parent_id
 
 
+async def _release_connection(session: AsyncSession) -> None:
+    """End the session's open transaction so the pooled connection goes back.
+
+    Every `session.execute` autobegins a transaction that stays open until it is
+    committed or rolled back. A poll loop that never does either therefore holds
+    one pooled connection *idle in transaction* for the whole wait — up to
+    `max_dependency_wait_seconds` (120s by default). The pool is 10 + 20 overflow,
+    so thirty simultaneously-waiting jobs are enough to starve every other query
+    in the worker, including the health probe. It also pins the transaction
+    horizon, which blocks autovacuum from reclaiming dead tuples for that long.
+
+    `commit` rather than `rollback` because the session factory sets
+    `expire_on_commit=False`: committing leaves the caller's already-loaded ORM
+    objects usable, whereas a rollback would expire them and turn the next plain
+    attribute read into an implicit lazy load — which raises MissingGreenlet on
+    an async session. Nothing is pending at these call sites, so the commit
+    writes nothing; it exists purely to end the transaction.
+    """
+    await session.commit()
+
+
 async def _await_settled(
     session: AsyncSession, message_id: str | None, settings
 ) -> None:
@@ -314,6 +335,8 @@ async def _await_settled(
             select(Message.status).where(Message.id == message_id)
         )
         status = result.scalar_one_or_none()
+        # Close the read transaction before sleeping. See _release_connection.
+        await _release_connection(session)
         if status is None or status in Status.TERMINAL:
             return
         if asyncio.get_running_loop().time() > deadline:
@@ -418,7 +441,13 @@ async def _resolve_dependency(
     waited = False
     wait_start = loop.time()
 
-    while await _earlier_in_flight(session, job):
+    while True:
+        pending = await _earlier_in_flight(session, job)
+        # Close the read transaction before sleeping, so a job that waits two
+        # minutes does not hold a pooled connection for two minutes.
+        await _release_connection(session)
+        if not pending:
+            break
         if loop.time() > deadline:
             logger.warning("job %s gave up waiting for predecessors", job.id)
             break
