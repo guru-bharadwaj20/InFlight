@@ -136,8 +136,22 @@ class AttachmentIn(BaseModel):
     data: str = Field(max_length=MAX_ATTACHMENT_BASE64_CHARS)
 
 
+def _not_blank(value: str) -> str:
+    # min_length=1 admits "   ", which every downstream consumer then strips back
+    # to nothing: to_contents drops the turn, the transcript comes out empty, and
+    # the provider rejects the call with an opaque error rendered in the bubble.
+    # Reject it at the edge, where the message can actually be useful.
+    if not value.strip():
+        raise ValueError("content must contain more than whitespace")
+    return value
+
+
 class PromptCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    content: Annotated[
+        str,
+        Field(min_length=1, max_length=MAX_PROMPT_CHARS),
+        AfterValidator(_not_blank),
+    ]
     # Set to chain this prompt to an earlier message: a deterministic override
     # that makes the job wait, whatever dependency detection would have said.
     parent_message_id: str | None = None

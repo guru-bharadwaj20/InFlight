@@ -52,6 +52,14 @@ class LLMNotConfigured(RuntimeError):
     """Raised when no API key is set, so the job can report it as a normal error."""
 
 
+class EmptyTranscript(RuntimeError):
+    """Raised when a snapshot normalises down to nothing to send.
+
+    `to_contents` drops blank turns and pops a leading model turn, so a transcript
+    can legitimately come out empty. Sending that produces an opaque provider
+    rejection; naming the condition here makes the bubble say something true."""
+
+
 def describe_error(exc: BaseException, model: str | None = None) -> str:
     """Turn a provider exception into something worth showing in a chat bubble.
 
@@ -328,6 +336,12 @@ async def stream_completion(
             contents[-1].parts = list(contents[-1].parts or []) + image_parts
         else:
             contents.append(types.Content(role="user", parts=image_parts))
+
+    if not contents:
+        # Nothing survived normalisation and no images made up for it. Fail here
+        # with a legible reason rather than letting the provider reject an empty
+        # request and surfacing its envelope in the chat bubble.
+        raise EmptyTranscript("there was no prompt content to send to the model")
 
     settings = get_settings()
     breaker = _breaker()
