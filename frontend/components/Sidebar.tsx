@@ -8,6 +8,7 @@ import { api, type Conversation } from "@/lib/api";
 import { initials } from "@/lib/initials";
 import { useAuth } from "@/lib/useAuth";
 import { Logo } from "./Logo";
+import { Popover } from "./Popover";
 import { ThemeToggle } from "./theme";
 
 /**
@@ -26,7 +27,6 @@ function ChatRow({
   onChanged: () => void;
   onDeleted: () => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -52,7 +52,6 @@ function ChatRow({
   }
 
   async function toggleStar() {
-    setMenuOpen(false);
     try {
       await api.updateConversation(conversation.id, { starred: !conversation.starred });
       onChanged();
@@ -108,49 +107,53 @@ function ChatRow({
         <span className="truncate">{conversation.title ?? "Untitled chat"}</span>
       </Link>
 
-      <button
-        onClick={() => setMenuOpen((v) => !v)}
-        aria-label="Chat options"
-        className={`absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-faint transition-opacity hover:bg-surface-2 hover:text-ink ${
-          menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
-        }`}
-      >
-        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden>
-          <circle cx="10" cy="4" r="1.5" />
-          <circle cx="10" cy="10" r="1.5" />
-          <circle cx="10" cy="16" r="1.5" />
-        </svg>
-      </button>
-
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-          <div className="absolute right-1 top-8 z-20 w-40 overflow-hidden rounded-xl border border-edge bg-surface py-1 shadow-composer">
-            <MenuItem onClick={toggleStar}>
-              <StarIcon filled={conversation.starred} />
-              {conversation.starred ? "Unstar" : "Star"}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                setMenuOpen(false);
-                setDraft(conversation.title ?? "");
-                setRenaming(true);
-              }}
-            >
-              <PencilIcon /> Rename
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                setMenuOpen(false);
-                setConfirmingDelete(true);
-              }}
-              danger
-            >
-              <TrashIcon /> Delete
-            </MenuItem>
-          </div>
-        </>
-      )}
+      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+        <Popover
+          label="Chat options"
+          align="right"
+          panelClassName="top-7 w-40"
+          triggerClassName="rounded-md p-1 text-ink-faint transition-opacity hover:bg-surface-2 hover:text-ink opacity-0 group-hover:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
+          trigger={() => (
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden>
+              <circle cx="10" cy="4" r="1.5" />
+              <circle cx="10" cy="10" r="1.5" />
+              <circle cx="10" cy="16" r="1.5" />
+            </svg>
+          )}
+        >
+          {(close) => (
+            <>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  void toggleStar();
+                }}
+              >
+                <StarIcon filled={conversation.starred} />
+                {conversation.starred ? "Unstar" : "Star"}
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  setDraft(conversation.title ?? "");
+                  setRenaming(true);
+                }}
+              >
+                <PencilIcon /> Rename
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  setConfirmingDelete(true);
+                }}
+                danger
+              >
+                <TrashIcon /> Delete
+              </MenuItem>
+            </>
+          )}
+        </Popover>
+      </div>
 
       <ConfirmDialog
         open={confirmingDelete}
@@ -395,45 +398,46 @@ export function Sidebar() {
 function UserFooter() {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
 
   if (!user) return null;
 
   return (
-    <div className="relative border-t border-edge p-2">
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-2 z-20 mb-1 w-52 overflow-hidden rounded-xl border border-edge bg-surface py-1 shadow-composer">
-            <button
-              onClick={() => {
-                setOpen(false);
-                logout();
-                router.replace("/login");
-              }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-failed hover:bg-surface-2"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-                <path d="M13 14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1M9 10h8m0 0-2.5-2.5M17 10l-2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Log out
-            </button>
-          </div>
-        </>
-      )}
-
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+    <div className="border-t border-edge p-2">
+      <Popover
+        label="Account"
+        panelClassName="bottom-full mb-1 w-52"
+        triggerClassName="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+        trigger={() => (
+          <>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-flight to-ember text-xs font-semibold text-white">
+              {initials(user.name)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-ink">{user.name}</span>
+              <span className="block truncate text-xs text-ink-faint">{user.email}</span>
+            </span>
+          </>
+        )}
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-flight to-ember text-xs font-semibold text-white">
-          {initials(user.name)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm text-ink">{user.name}</span>
-          <span className="block truncate text-xs text-ink-faint">{user.email}</span>
-        </span>
-      </button>
+        {(close) => (
+          <MenuItem
+            danger
+            onClick={() => {
+              close();
+              logout();
+              router.replace("/login");
+            }}
+          >
+            <LogoutIcon /> Log out
+          </MenuItem>
+        )}
+      </Popover>
     </div>
   );
 }
+
+const LogoutIcon = () => (
+  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
+    <path d="M13 14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1M9 10h8m0 0-2.5-2.5M17 10l-2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);

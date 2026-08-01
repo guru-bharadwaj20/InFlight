@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type ModelInfo } from "@/lib/api";
 import { useSpeech } from "@/lib/useSpeech";
+import { Popover } from "./Popover";
 
 export interface Attachment {
   mime_type: string;
@@ -316,7 +317,6 @@ function AttachMenu({
   onImages: (added: Attachment[]) => void;
   onGithub: (text: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [camera, setCamera] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -327,7 +327,6 @@ function AttachMenu({
   }
 
   async function addGithub() {
-    setOpen(false);
     const input = window.prompt("Paste a GitHub file URL (blob or raw):");
     if (!input) return;
     try {
@@ -357,22 +356,17 @@ function AttachMenu({
         }}
       />
 
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Add attachment"
-        className="rounded-lg p-2 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+      <Popover
+        label="Add attachment"
+        panelClassName="bottom-full mb-2 w-52"
+        triggerClassName="rounded-lg p-2 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+        trigger={() => <PlusIcon />}
       >
-        <PlusIcon />
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-edge bg-surface py-1 shadow-composer">
+        {(close) => (
+          <>
             <MenuRow
               onClick={() => {
-                setOpen(false);
+                close();
                 fileRef.current?.click();
               }}
               icon={<ImageIcon />}
@@ -381,19 +375,25 @@ function AttachMenu({
             </MenuRow>
             <MenuRow
               onClick={() => {
-                setOpen(false);
+                close();
                 setCamera(true);
               }}
               icon={<CameraIcon />}
             >
               Take a photo
             </MenuRow>
-            <MenuRow onClick={addGithub} icon={<GithubIcon />}>
+            <MenuRow
+              onClick={() => {
+                close();
+                void addGithub();
+              }}
+              icon={<GithubIcon />}
+            >
               Add from GitHub
             </MenuRow>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </Popover>
 
       {camera && (
         <CameraCapture
@@ -521,50 +521,49 @@ function ModelPicker({
   models: ModelInfo[];
   onChange: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-
   const label = models.find((m) => m.id === model)?.label ?? model ?? "model";
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-full border border-edge px-2.5 py-1 text-xs text-ink-soft transition-colors hover:bg-surface-2"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-flight" />
-        <span className="max-w-[9rem] truncate">{label}</span>
-        <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.4">
-          <path d="M3 4.5 6 7.5 9 4.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {open && (
+    <Popover
+      label="Choose model"
+      align="right"
+      panelClassName="bottom-full mb-2 max-h-72 w-60 overflow-y-auto"
+      triggerClassName="flex items-center gap-1.5 rounded-full border border-edge px-2.5 py-1 text-xs text-ink-soft transition-colors hover:bg-surface-2"
+      trigger={() => (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-20 mb-2 max-h-72 w-60 overflow-y-auto rounded-xl border border-edge bg-surface py-1 shadow-composer">
-            {models.length === 0 && (
-              <p className="px-3 py-2 text-xs text-ink-faint">Loading models…</p>
-            )}
-            {models.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  onChange(m.id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-2 ${
-                  m.id === model ? "text-flight" : "text-ink"
-                }`}
-              >
-                <span className="truncate">{m.label}</span>
-                {m.id === model && <span className="text-xs">✓</span>}
-              </button>
-            ))}
-          </div>
+          <span className="h-1.5 w-1.5 rounded-full bg-flight" />
+          <span className="max-w-[9rem] truncate">{label}</span>
+          <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M3 4.5 6 7.5 9 4.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </>
       )}
-    </div>
+    >
+      {(close) => (
+        <>
+          {models.length === 0 && (
+            <p className="px-3 py-2 text-xs text-ink-faint">Loading models…</p>
+          )}
+          {models.map((m) => (
+            <button
+              key={m.id}
+              role="menuitemradio"
+              aria-checked={m.id === model}
+              onClick={() => {
+                onChange(m.id);
+                close();
+              }}
+              className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-2 ${
+                m.id === model ? "text-flight" : "text-ink"
+              }`}
+            >
+              <span className="truncate">{m.label}</span>
+              {m.id === model && <span className="text-xs">✓</span>}
+            </button>
+          ))}
+        </>
+      )}
+    </Popover>
   );
 }
 
