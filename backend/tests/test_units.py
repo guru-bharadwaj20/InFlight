@@ -372,23 +372,19 @@ def test_bucket_never_exceeds_capacity() -> None:
 # --- pricing ---------------------------------------------------------------
 
 
-def test_unknown_model_yields_no_estimate_rather_than_zero() -> None:
-    assert pricing.rate_for("no-such-model") is None
-    assert pricing.cost_usd("no-such-model", 1000, 1000) is None
-    assert pricing.cost_usd(None, 1000, 1000) is None
+def test_pricing_table_is_well_formed() -> None:
+    """The table is data, and the client applies it, so its shape is the contract."""
+    table = pricing.table()
+    for key in ("updated", "source", "currency", "unit", "note", "models"):
+        assert key in table, f"pricing.json is missing {key!r}"
+    assert table["models"], "no models priced"
+    for model, rate in table["models"].items():
+        assert set(rate) == {"input", "output"}, f"{model} has an unexpected rate shape"
+        assert rate["input"] >= 0 and rate["output"] >= 0, f"{model} has a negative rate"
 
 
-def test_known_model_costs_scale_with_tokens() -> None:
-    model = next(iter(pricing.table()["models"]))
-    cheap = pricing.cost_usd(model, 1_000, 1_000)
-    dear = pricing.cost_usd(model, 10_000, 10_000)
-    assert cheap is not None and dear is not None
-    assert dear > cheap >= 0
-
-
-def test_missing_token_counts_are_treated_as_zero() -> None:
-    model = next(iter(pricing.table()["models"]))
-    assert pricing.cost_usd(model, None, None) == 0
+def test_pricing_table_is_cached() -> None:
+    assert pricing.table() is pricing.table()
 
 
 # --- ids -------------------------------------------------------------------
