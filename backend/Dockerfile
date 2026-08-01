@@ -1,9 +1,15 @@
 FROM python:3.12-slim
 
+# UVICORN_RELOAD defaults to false. It used to default to true, baked into the
+# image, so anything running this image without explicitly overriding it got the
+# development auto-reloader -- which forks a reloader process and, per the note
+# on CMD below, breaks the SIGTERM handling the graceful drain depends on. The
+# dev default belongs in docker-compose.yml, which is where dev happens, not in
+# an image someone might deploy.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    UVICORN_RELOAD=true
+    UVICORN_RELOAD=false
 
 WORKDIR /app
 
@@ -24,9 +30,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD python -c "import urllib.request as u; u.urlopen('http://localhost:8000/health/live', timeout=2)" || exit 1
 
-# --reload defaults on because docker-compose.yml bind-mounts ./backend/app for
-# local development. It forks a separate reloader process, which complicates
-# SIGTERM handling for the graceful-drain logic in lifecycle.py, so anything
-# running this image outside that compose setup should set
-# UVICORN_RELOAD=false to get a plain single-process worker.
+# --reload is opt-in via UVICORN_RELOAD=true, which docker-compose.yml sets for
+# local development because it bind-mounts ./backend/app. It forks a separate
+# reloader process, which complicates SIGTERM handling for the graceful-drain
+# logic in lifecycle.py, so it stays off wherever that drain matters.
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 $( [ \"$UVICORN_RELOAD\" = \"true\" ] && echo --reload )"]
