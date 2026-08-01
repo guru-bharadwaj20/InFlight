@@ -14,6 +14,7 @@ Key layout:
 """
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -21,6 +22,8 @@ from typing import Any
 import redis.asyncio as redis
 
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # In-flight job state is reconstructable from Postgres, so nothing here needs to
 # outlive a generation by much. The TTL keeps abandoned jobs from accumulating.
@@ -288,6 +291,46 @@ async def get_idempotency(key: str) -> str | None:
 async def release_idempotency(key: str) -> None:
     """Drop a claim whose creation failed, so an honest retry is not blocked."""
     await get_redis().delete(f"idem:{key}")
+
+
+# --- Revoked tokens -------------------------------------------------------
+#
+# A JWT is valid until it expires, which is the whole point of not having to look
+# one up — and the reason logging out cannot be a purely client-side act. Before
+# this, "log out" deleted the token from localStorage and nothing else: a token
+# already copied out of a device, a log, or a shared machine stayed good for the
+# full jwt_expire_hours (a week by default) with no way to stop it.
+#
+# Only revoked ids are stored, and only until the token would have expired
+# anyway, so this stays small and self-cleaning — nothing like a session table.
+
+
+def _revoked_key(jti: str) -> str:
+    return f"revoked-jti:{jti}"
+
+
+async def revoke_token(jti: str, ttl_seconds: int) -> None:
+    if ttl_seconds <= 0:
+        return  # already expired; the signature check alone will reject it
+    await get_redis().set(_revoked_key(jti), "1", ex=ttl_seconds)
+
+
+async def is_token_revoked(jti: str) -> bool:
+    """True if this token was explicitly revoked.
+
+    Fails *open* on a Redis error. Redis being unreachable already breaks
+    generation, and refusing every authenticated request on top of that turns a
+    degraded system into a dead one. The exposure is bounded: it only affects
+    tokens someone has deliberately revoked, during an outage, and they still
+    expire on schedule.
+    """
+    if not jti:
+        return False
+    try:
+        return bool(await get_redis().exists(_revoked_key(jti)))
+    except Exception:
+        logger.exception("revocation check failed for %s; allowing the token", jti)
+        return False
 
 
 # --- WebSocket tickets ----------------------------------------------------

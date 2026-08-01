@@ -262,6 +262,9 @@ export const api = {
   /** Single-use, short-lived credential for opening a WebSocket. */
   wsTicket: () => request<WsTicket>("/auth/ws-ticket", { method: "POST" }),
 
+  /** Revoke the current token server-side, so logging out actually ends it. */
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+
   /** Rates only — the client already holds the token counts to apply them to. */
   pricing: () => request<Pricing>("/pricing"),
 

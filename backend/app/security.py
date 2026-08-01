@@ -5,6 +5,7 @@ and swapped without touching request handling. bcrypt for passwords (slow by
 design, salted per hash), a short JWT for the session.
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -58,17 +59,31 @@ def create_token(user_id: str) -> str:
         "sub": user_id,
         "iat": now,
         "exp": now + timedelta(hours=settings.jwt_expire_hours),
+        # A unique id per token, so an individual token can be revoked. Without
+        # it the only handle on a token is its subject, and revoking would mean
+        # signing every one of that user's sessions out at once.
+        "jti": secrets.token_urlsafe(16),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
 
 
-def decode_token(token: str) -> str | None:
-    """Return the user id a token carries, or None if it is invalid or expired."""
+def decode_claims(token: str) -> dict | None:
+    """The token's claims, or None if it is invalid or expired."""
     try:
-        payload = jwt.decode(
-            token, get_settings().jwt_secret, algorithms=[ALGORITHM]
-        )
+        return jwt.decode(token, get_settings().jwt_secret, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
+        return None
+
+
+def decode_token(token: str) -> str | None:
+    """Return the user id a token carries, or None if it is invalid or expired.
+
+    Signature and expiry only — it does not know about revocation, because that
+    needs Redis and this module is deliberately synchronous. `auth.optional_user`
+    is where the two are combined, and it is the only place tokens are accepted.
+    """
+    payload = decode_claims(token)
+    if payload is None:
         return None
     subject = payload.get("sub")
     return subject if isinstance(subject, str) else None

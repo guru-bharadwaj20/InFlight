@@ -10,9 +10,10 @@ cross-site cookies bring.
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import redis_client
 from .db import get_session
 from .models import User
-from .security import decode_token
+from .security import decode_claims
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -31,8 +32,16 @@ async def optional_user(
     token = _bearer(authorization)
     if not token:
         return None
-    user_id = decode_token(token)
-    if not user_id:
+    claims = decode_claims(token)
+    if claims is None:
+        return None
+    user_id = claims.get("sub")
+    if not isinstance(user_id, str):
+        return None
+    # Signature and expiry are not the whole story: a token can also have been
+    # revoked by logging out. This is the single place tokens are accepted, so
+    # it is the single place that check has to live.
+    if await redis_client.is_token_revoked(claims.get("jti") or ""):
         return None
     return await session.get(User, user_id)
 

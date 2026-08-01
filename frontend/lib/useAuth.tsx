@@ -63,6 +63,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Tell the server first, so the token is revoked rather than merely
+    // forgotten by this browser. Fire-and-forget on purpose: signing out must
+    // never appear to fail or hang, so the local state is cleared regardless of
+    // whether the call lands. A revocation that does not reach the server leaves
+    // the token expiring on its own schedule, exactly as before.
+    void api.logout().catch(() => {});
     auth.clear();
     setUser(null);
   }, []);

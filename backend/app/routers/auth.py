@@ -6,7 +6,9 @@ token, and let the token identify the user on every later request.
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,12 @@ from ..config import Settings, get_settings
 from ..db import get_session
 from ..models import User
 from ..schemas import LoginIn, SignupIn, TokenOut, UserOut, WsTicketOut
-from ..security import create_token, hash_password_async, verify_password_async
+from ..security import (
+    create_token,
+    decode_claims,
+    hash_password_async,
+    verify_password_async,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -89,6 +96,36 @@ async def login(
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(current_user)) -> User:
     return user
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(authorization: str | None = Header(default=None)) -> None:
+    """Revoke the presented token.
+
+    Logging out used to be entirely client-side: the browser dropped the token
+    from localStorage and the server was never told. Anything that had already
+    copied the token -- a shared machine, a log line, a synced browser profile --
+    kept a working credential for the rest of JWT_EXPIRE_HOURS, a week by
+    default, and there was no way to stop it. "Log out" on a device you no longer
+    trust did nothing to the credential you were worried about.
+
+    The token's id goes on a revocation list until the moment it would have
+    expired anyway, so the list stays small and empties itself. Deliberately
+    tolerant: a malformed or already-expired token is not an error worth
+    reporting, because the desired end state -- that token does not work -- is
+    already true.
+    """
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return
+    claims = decode_claims(token)
+    if not claims:
+        return
+    jti, exp = claims.get("jti"), claims.get("exp")
+    if not jti or not exp:
+        return
+    remaining = int(exp - datetime.now(timezone.utc).timestamp())
+    await redis_client.revoke_token(jti, remaining)
 
 
 @router.post("/ws-ticket", response_model=WsTicketOut)
