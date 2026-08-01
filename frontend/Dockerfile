@@ -12,7 +12,11 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 FROM base AS dev
-RUN npm install
+# npm ci, not npm install: the lockfile is committed and the builder stage below
+# already respects it, so using install here meant the dev container could
+# silently resolve a different dependency tree than the one CI and production
+# build against.
+RUN npm ci
 COPY . .
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
