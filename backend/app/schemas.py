@@ -1,15 +1,40 @@
+import base64
+import binascii
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+)
 
 # Bounds nothing else in the stack enforces: there is no ASGI-level request
 # body limit, so without these a single request can buffer an arbitrarily
 # large string/attachment in memory before validation even runs, independent
 # of max_concurrent_jobs_per_conversation (which only counts jobs, not bytes).
 MAX_PROMPT_CHARS = 20_000
-# ~8 MiB of decoded image bytes, expressed as the base64 length that produces it.
-MAX_ATTACHMENT_BASE64_CHARS = 8 * 1024 * 1024 * 4 // 3
+# ~4 MiB of decoded image bytes, expressed as the base64 length that produces it.
+# Was 8 MiB each with up to 6 attachments, which let one request carry ~48 MiB of
+# base64 — buffered whole, in memory, before validation ever ran. The composer
+# downscales to 1600px and re-encodes as JPEG before upload, which lands far
+# under this, so the cap only ever bites on a request that did not come from the
+# app.
+MAX_ATTACHMENT_BASE64_CHARS = 4 * 1024 * 1024 * 4 // 3
+MAX_ATTACHMENTS = 4
+# Belt to the per-field braces: caps the *total* across all attachments, so the
+# worst case is one bound rather than the product of two.
+MAX_TOTAL_ATTACHMENT_BASE64_CHARS = 8 * 1024 * 1024 * 4 // 3
+
+# What the vision model is actually sent. An arbitrary string here reaches the
+# provider as a declared content type, and nothing downstream re-derives it from
+# the bytes.
+ALLOWED_IMAGE_MIME_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"}
+)
 
 
 # bcrypt refuses (and historically silently truncated) anything past 72 *bytes*.
@@ -135,6 +160,35 @@ class AttachmentIn(BaseModel):
     mime_type: str
     data: str = Field(max_length=MAX_ATTACHMENT_BASE64_CHARS)
 
+    @field_validator("mime_type")
+    @classmethod
+    def _known_image_type(cls, value: str) -> str:
+        # Was a free-form string handed straight to the provider as a declared
+        # content type. Parameters ("image/jpeg; charset=x") and case are both
+        # legal in the wild, so normalise before matching rather than rejecting
+        # a request that is really fine.
+        normalised = value.split(";")[0].strip().lower()
+        if normalised not in ALLOWED_IMAGE_MIME_TYPES:
+            raise ValueError(
+                f"unsupported attachment type {value!r}; expected one of "
+                + ", ".join(sorted(ALLOWED_IMAGE_MIME_TYPES))
+            )
+        return normalised
+
+    @field_validator("data")
+    @classmethod
+    def _decodable_base64(cls, value: str) -> str:
+        # Validated here rather than in the job. base64.b64decode ran inside
+        # run_job with no validate=, so a payload with bad padding raised
+        # binascii.Error deep in the generation path and surfaced as a failed
+        # answer with an opaque message -- for input the request handler could
+        # have rejected outright with a 422.
+        try:
+            base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"attachment data is not valid base64: {exc}") from exc
+        return value
+
 
 def _not_blank(value: str) -> str:
     # min_length=1 admits "   ", which every downstream consumer then strips back
@@ -160,7 +214,20 @@ class PromptCreate(BaseModel):
     model: str | None = None
     # Images attached in the composer, passed to the vision model for this
     # prompt only. Capped to keep an oversized request from wedging a job.
-    attachments: list[AttachmentIn] = Field(default_factory=list, max_length=6)
+    attachments: list[AttachmentIn] = Field(
+        default_factory=list, max_length=MAX_ATTACHMENTS
+    )
+
+    @field_validator("attachments")
+    @classmethod
+    def _total_attachment_size(cls, value: list[AttachmentIn]) -> list[AttachmentIn]:
+        total = sum(len(a.data) for a in value)
+        if total > MAX_TOTAL_ATTACHMENT_BASE64_CHARS:
+            raise ValueError(
+                "attachments exceed the total size limit of "
+                f"{MAX_TOTAL_ATTACHMENT_BASE64_CHARS} base64 characters"
+            )
+        return value
 
 
 class StreamState(BaseModel):

@@ -723,6 +723,8 @@ async def run_job(job_id: str, conversation_id: str) -> None:
             # Images submitted with this prompt, stashed in Redis by the handler.
             # Decoded here rather than in the LLM layer so that stays free of any
             # transport concern.
+            # Validated at the edge (schemas.AttachmentIn), so the type is known
+            # and the payload is known-decodable by the time it reaches here.
             images = [
                 (a["mime_type"], base64.b64decode(a["data"]))
                 for a in await redis_client.get_attachments(job_id)

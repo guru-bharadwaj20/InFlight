@@ -18,6 +18,11 @@ export interface SubmitOptions {
 
 const MODEL_KEY = "inflight-model";
 
+// Must match schemas.MAX_ATTACHMENTS on the backend. Silently slicing to a
+// larger number here than the server accepts turns an over-attach into a 422
+// after upload rather than a no-op in the picker.
+const MAX_ATTACHMENTS = 4;
+
 /**
  * The one place a prompt is written. Never disabled by work in progress — the
  * whole product rests on being able to send again while answers stream.
@@ -138,7 +143,9 @@ export function Composer({
 
       <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1">
         <AttachMenu
-          onImages={(added) => setAttachments((list) => [...list, ...added].slice(0, 6))}
+          onImages={(added) =>
+            setAttachments((list) => [...list, ...added].slice(0, MAX_ATTACHMENTS))
+          }
           onGithub={(text) => insert(text)}
         />
 
