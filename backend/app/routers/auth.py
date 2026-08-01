@@ -4,12 +4,14 @@ Deliberately small: create a user with a hashed password, hand back a signed
 token, and let the token identify the user on every later request.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import ratelimit
 from ..auth import current_user
+from ..config import Settings, get_settings
 from ..db import get_session
 from ..models import User
 from ..schemas import LoginIn, SignupIn, TokenOut, UserOut
@@ -18,7 +20,19 @@ from ..security import create_token, hash_password_async, verify_password_async
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/signup", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
+def _signup_limit():
+    s = get_settings()
+    return ratelimit.limit_by_client(
+        "signup", s.signup_rate_limit_per_ip, s.signup_rate_window_seconds
+    )
+
+
+@router.post(
+    "/signup",
+    response_model=TokenOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_signup_limit())],
+)
 async def signup(
     payload: SignupIn,
     session: AsyncSession = Depends(get_session),
@@ -50,9 +64,15 @@ async def signup(
 
 @router.post("/login", response_model=TokenOut)
 async def login(
+    request: Request,
     payload: LoginIn,
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> TokenOut:
+    # Before the lookup and before bcrypt, so a throttled guess costs neither a
+    # query nor a hash.
+    await ratelimit.limit_login(request, payload.email, settings)
+
     result = await session.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
 

@@ -91,6 +91,26 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Rate limiting (app/ratelimit.py). Counters live in Redis so the limit holds
+    # across workers. Set any of these to 0 to disable that particular limit.
+    #
+    # Login is limited twice over — per address and per targeted account —
+    # because either bucket alone is easy to walk around: per-address only lets a
+    # distributed attempt spread one account's guesses across many hosts, and
+    # per-account only lets one host spray a list of accounts at full speed.
+    login_rate_limit_per_ip: int = 10
+    login_rate_limit_per_account: int = 5
+    login_rate_window_seconds: int = 300
+    # Signup is the cheapest way to make a stranger's database grow, and each one
+    # costs a bcrypt hash.
+    signup_rate_limit_per_ip: int = 5
+    signup_rate_window_seconds: int = 3600
+    # Whether X-Forwarded-For may be believed when identifying a caller. Off by
+    # default: the header is attacker-controlled, so trusting it without a proxy
+    # in front lets anyone mint a fresh rate-limit budget per request. Turn it on
+    # only when this process genuinely sits behind a proxy that sets it.
+    trust_proxy_headers: bool = False
+
     # Structured logging (app/logging_config.py). JSON by default so lines carry
     # request/job correlation ids for a log pipeline; set LOG_JSON=false for
     # readable lines in a terminal.
