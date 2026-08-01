@@ -32,6 +32,12 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 
+class SchedulerStopped(RuntimeError):
+    """Raised into anything still queued for a slot when the scheduler stops, so
+    a shutting-down worker's jobs fail fast instead of waiting on a dispatcher
+    that will never run again."""
+
+
 class TokenBucket:
     """Classic token bucket: `rate` tokens accrue per second up to `capacity`.
 
@@ -154,6 +160,15 @@ class FairScheduler:
             self._task = asyncio.create_task(self._loop(), name="scheduler")
 
     async def stop(self) -> None:
+        """Shut the dispatcher down and fail anything still queued for a slot.
+
+        Cancelling the dispatcher on its own left queued futures unresolved, so
+        every job waiting for admission simply hung — it could only be freed by
+        drain()'s timeout cancelling the whole task, which turns an orderly
+        shutdown into a stall for as long as the drain window. Waking each waiter
+        with SchedulerStopped lets those jobs settle through their normal error
+        path instead.
+        """
         if self._task is not None:
             self._task.cancel()
             try:
@@ -161,6 +176,15 @@ class FairScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        for key, queue in list(self._queues.items()):
+            while queue:
+                fut = queue.popleft()
+                self._waiting -= 1
+                if not fut.done():
+                    fut.set_exception(SchedulerStopped("scheduler is shutting down"))
+            self._drop_key(key)
+        self._rr.clear()
 
     def _release(self) -> None:
         self.active -= 1
