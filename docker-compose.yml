@@ -62,11 +62,25 @@ services:
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
       CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-gemini-2.5-flash-lite}
       MAX_CONCURRENT_JOBS_PER_CONVERSATION: ${MAX_CONCURRENT_JOBS_PER_CONVERSATION:-8}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
-      # This compose file's whole purpose is local-dev defaults, so accept the
-      # default secret here; a real deployment should set JWT_SECRET instead
-      # of relying on this flag.
-      ALLOW_DEFAULT_JWT_SECRET: ${ALLOW_DEFAULT_JWT_SECRET:-true}
+      # No default. The backend refuses to boot without a real JWT_SECRET, and
+      # that refusal is the point: this file previously supplied the known dev
+      # secret *and* set ALLOW_DEFAULT_JWT_SECRET=true, which disabled the guard
+      # by default. `docker compose up` on a server therefore produced a running,
+      # healthy-looking deployment in which every session token was forgeable by
+      # anyone who had read this repository.
+      #
+      # Generate one with:  openssl rand -hex 32
+      # and put it in .env. Failing to start is the correct outcome otherwise.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env - generate with: openssl rand -hex 32}
+      ALLOW_DEFAULT_JWT_SECRET: ${ALLOW_DEFAULT_JWT_SECRET:-false}
+      # Optimistic concurrency: a dependent prompt generates immediately and
+      # re-runs only if the retrospective check confirms it missed context. The
+      # README documents this as a feature, but the variable was never passed
+      # through, so setting it in .env did nothing to the containerised app.
+      SPECULATIVE_EXECUTION: ${SPECULATIVE_EXECUTION:-false}
+      # Guards /metrics and /traces. Empty falls back to requiring a signed-in
+      # user, which is what a browser has; a scraper needs this set.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       USE_FAKE_LLM: ${USE_FAKE_LLM:-false}
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-3000}
       # This compose file bind-mounts ./backend/app, so the reload watcher is
