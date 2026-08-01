@@ -69,10 +69,6 @@ def spawn(job_id: str, conversation_id: str) -> asyncio.Task:
     return task
 
 
-def is_running(job_id: str) -> bool:
-    return job_id in _running
-
-
 def cancel_local(job_id: str) -> bool:
     """Cancel a job this worker is running. False if it lives elsewhere (or not
     at all) — the caller then relies on the control broadcast to reach its owner."""
@@ -861,7 +857,6 @@ __all__ = [
     "spawn",
     "request_cancel",
     "cancel_local",
-    "is_running",
     "run_job",
     "build_context",
     "start_control_listener",

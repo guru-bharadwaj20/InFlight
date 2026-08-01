@@ -661,4 +661,4 @@ async def get_context_snapshot(
     return list(result.scalars())
 
 
-__all__ = ["router", "Role"]
+__all__ = ["router"]
