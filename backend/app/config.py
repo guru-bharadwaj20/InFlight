@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     # open to the internet.
     metrics_token: str = ""
 
+    # Hard ceiling on a request body, enforced before the body is read. Pydantic's
+    # field limits only apply once the whole body has already been buffered in
+    # memory and parsed, so they bound what is *accepted*, not what is *held*.
+    # Sized above the largest legitimate request (a prompt plus its attachment
+    # allowance, with room for JSON and base64 overhead) and far below anything
+    # that threatens the worker.
+    max_request_bytes: int = 16 * 1024 * 1024
+
     # Structured logging (app/logging_config.py). JSON by default so lines carry
     # request/job correlation ids for a log pipeline; set LOG_JSON=false for
     # readable lines in a terminal.

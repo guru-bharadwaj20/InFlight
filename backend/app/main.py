@@ -1,8 +1,9 @@
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import jobs, lifecycle, redis_client, scheduler
 from .config import DEFAULT_JWT_SECRET, get_settings
@@ -56,6 +57,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Refuse an oversized body before reading it.
+
+    Pydantic's field limits only apply after the entire body has been buffered
+    and parsed, so they bound what is *accepted*, never what is *held*. Nothing
+    else in the stack imposed a ceiling, which left a single request free to
+    stream an arbitrary number of bytes into the worker's memory and be rejected
+    only once it had all arrived.
+
+    Content-Length is a claim, not a guarantee, so this is a cheap first gate
+    rather than the whole answer: a chunked request omits it entirely. It costs
+    one integer comparison and turns the obvious case into a 413 before a byte of
+    body is read. A hostile client that lies about the length is a job for the
+    proxy or ASGI server in front of this, which is where a true streaming cap
+    belongs.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > get_settings().max_request_bytes:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "request body is too large"},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "invalid Content-Length"},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
