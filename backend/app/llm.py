@@ -109,7 +109,22 @@ def describe_error(exc: BaseException, model: str | None = None) -> str:
     if "SAFETY" in text or "blocked" in text.lower():
         return "The provider blocked this response under its safety filters."
 
-    return f"{type(exc).__name__}: {text[:200]}"
+    # Anything unrecognised: name the exception type and stop there.
+    #
+    # This used to append 200 characters of the raw exception, which for this SDK
+    # is the provider's whole error envelope — nested JSON carrying project ids,
+    # quota metric names, internal endpoints and help URLs. That text was written
+    # to the messages table and rendered verbatim in the chat bubble, so an
+    # upstream misconfiguration leaked deployment details to whoever happened to
+    # be chatting. It also told the user nothing they could act on.
+    #
+    # The full text is not lost: run_job already logs the exception with its
+    # traceback, which is where an operator should be reading it from anyway.
+    logger.warning("unrecognised provider error surfaced to a user: %s", type(exc).__name__)
+    return (
+        f"The model call failed ({type(exc).__name__}). The details are in the "
+        "server logs."
+    )
 
 
 @dataclass
