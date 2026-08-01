@@ -30,6 +30,11 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 # Long enough to tell two chats apart in a 16rem rail, short enough not to wrap.
 _TITLE_MAX_CHARS = 48
 
+# How long a delete waits for each cancelled job to settle before removing rows.
+# Short: cancellation is fast, and a job that has not settled by now is one whose
+# owner is gone, in which case the cascade is exactly the right outcome anyway.
+_DELETE_SETTLE_TIMEOUT = 2.0
+
 
 def _derive_title(prompt: str) -> str | None:
     """A sidebar label taken from the first prompt of an untitled chat.
@@ -123,9 +128,21 @@ async def delete_conversation(
     conversation = await _load_conversation(session, conversation_id, user)
     # Cancel anything still generating so no task keeps writing to a Redis key
     # for a conversation that no longer exists.
-    for job_id in await redis_client.active_jobs(conversation_id):
+    active = await redis_client.active_jobs(conversation_id)
+    for job_id in active:
         await jobs.request_cancel(job_id)  # reaches the owning worker, wherever it is
+
+    # Let the cancelled jobs settle *before* deleting the rows. Deleting straight
+    # away raced them: a cancelled job's _finish still has its own row loaded and
+    # commits it inside an asyncio.shield, so it would UPDATE a row the cascade
+    # had already removed, matching nothing and raising StaleDataError out of the
+    # shield. Harmless to the data — the conversation is going away regardless —
+    # but it logged an unhandled exception on a completely ordinary user action,
+    # which is the kind of noise that trains people to ignore their error feed.
+    for job_id in active:
+        await _await_terminal(session, job_id, timeout=_DELETE_SETTLE_TIMEOUT)
         await redis_client.clear_job(job_id, conversation_id)
+
     await session.delete(conversation)  # messages cascade via the FK
     await session.commit()
 
