@@ -89,10 +89,6 @@ async def set_job_state(job_id: str, **fields: Any) -> None:
         await pipe.execute()
 
 
-async def get_job_state(job_id: str) -> dict[str, str]:
-    return await get_redis().hgetall(job_key(job_id))
-
-
 async def append_chunk(job_id: str, text: str, seq: int) -> None:
     """Extend the replay buffer and record how many chunks it covers.
 
@@ -246,10 +242,6 @@ async def unregister_active_job(conversation_id: str, job_id: str) -> None:
 
 async def active_jobs(conversation_id: str) -> set[str]:
     return set(await get_redis().smembers(conversation_active_key(conversation_id)))
-
-
-async def active_job_count(conversation_id: str) -> int:
-    return int(await get_redis().scard(conversation_active_key(conversation_id)))
 
 
 # --- Idempotency keys -----------------------------------------------------
