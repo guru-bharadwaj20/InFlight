@@ -78,23 +78,49 @@ class FairScheduler:
         self.active = 0
         self._queues: OrderedDict[str, deque[asyncio.Future]] = OrderedDict()
         self._rr: deque[str] = deque()  # round-robin order of conversation keys
+        # Membership mirror of _rr. `key in deque` is a linear scan, and slot()
+        # tested it on every single acquisition, so admission cost grew with the
+        # number of distinct conversations the process had ever seen.
+        self._in_rr: set[str] = set()
+        # Maintained incrementally rather than recomputed. waiting() was summing
+        # over every queue, and both the dispatcher loop and every /metrics
+        # scrape called it.
+        self._waiting = 0
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
     # --- introspection (for metrics) ---
     def waiting(self) -> int:
-        return sum(len(q) for q in self._queues.values())
+        return self._waiting
+
+    def tracked_keys(self) -> int:
+        """Conversations currently holding a place in the rotation. Should fall
+        back to zero once everything drains — it is the leak canary."""
+        return len(self._queues)
+
+    def _drop_key(self, key: str) -> None:
+        self._queues.pop(key, None)
+        self._in_rr.discard(key)
 
     def _pick_key(self) -> str | None:
         # Rotate through the round-robin order and return the first key that
-        # actually has a waiter. Empty keys are skipped, not removed, so a
-        # conversation keeps its place in the rotation across bursts.
+        # actually has a waiter, evicting any that no longer does.
+        #
+        # Empty keys used to be skipped rather than removed, "so a conversation
+        # keeps its place in the rotation across bursts". The place is worth
+        # nothing — round-robin fairness only orders keys that have someone
+        # queued — and the cost was unbounded: one permanent entry in _queues and
+        # _rr per conversation id ever admitted, for the life of the process,
+        # doubled because the classifier queues under its own key. Every
+        # acquisition then scanned that growing deque, and every dispatch
+        # rotated through all of it.
         for _ in range(len(self._rr)):
             key = self._rr[0]
-            self._rr.rotate(-1)
-            q = self._queues.get(key)
-            if q:
+            if self._queues.get(key):
+                self._rr.rotate(-1)  # keep it, but move it to the back
                 return key
+            self._rr.popleft()
+            self._drop_key(key)
         return None
 
     async def _loop(self) -> None:
@@ -111,6 +137,12 @@ class FairScheduler:
                 if key is None:
                     break
                 fut = self._queues[key].popleft()
+                self._waiting -= 1
+                # The now-possibly-empty key is left for _pick_key to evict when
+                # the rotation next brings it to the front. Removing it here
+                # would mean deque.remove(), an O(n) scan on the hot path — the
+                # very cost this change exists to remove. Lazy eviction is O(1)
+                # amortised and every key reaches the front eventually.
                 if fut.done():
                     # Cancelled while queued — reclaim nothing, just skip it.
                     continue
@@ -145,8 +177,12 @@ class FairScheduler:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         self._queues.setdefault(key, deque()).append(fut)
-        if key not in self._rr:
+        # O(1) membership test. This was `key not in self._rr`, a linear scan of
+        # a deque that only ever grew.
+        if key not in self._in_rr:
+            self._in_rr.add(key)
             self._rr.append(key)
+        self._waiting += 1
         self._ensure_running()
         self._wake.set()
 
@@ -158,6 +194,12 @@ class FairScheduler:
             # give it back; otherwise the dispatcher already skipped the future.
             if fut.done() and not fut.cancelled():
                 self._release()
+            else:
+                # Still queued and now dead. Wake the dispatcher so it pops and
+                # discards it, rather than leaving it counted in _waiting (and
+                # reported as backpressure in /metrics) until unrelated traffic
+                # happens to wake the loop.
+                self._wake.set()
             raise
 
         wait_s = time.perf_counter() - t0
