@@ -9,6 +9,11 @@ import {
 } from "./api";
 import { orderMessages } from "./ordering";
 
+// How long to wait for a row to turn up on its own before refetching to find it.
+// Long enough that the POST we are already awaiting normally wins the race, short
+// enough that a prompt sent from another tab appears promptly.
+const ORPHAN_REFETCH_MS = 400;
+
 /**
  * Owns the conversation's messages and the single socket feeding them.
  *
@@ -29,6 +34,20 @@ export function useConversation(conversationId: string) {
   // Jobs with a resync in flight, so a burst of gapped frames triggers one fetch
   // rather than a storm of them.
   const resyncing = useRef<Set<string>>(new Set());
+  // Job ids we actually hold a row for. Frames are addressed by job id, but a
+  // frame can arrive before the row it addresses exists: the server spawns the
+  // job before returning the 202, so the first chunks race the POST response —
+  // and a prompt sent from another tab has no row here at all until we refetch.
+  const knownJobs = useRef<Set<string>>(new Set());
+  // Jobs we saw frames for while they were unknown. Once the row shows up these
+  // get one authoritative resync rather than a replay of what we held onto.
+  const orphaned = useRef<Set<string>>(new Set());
+  const orphanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // applyFrame needs to trigger a refetch, but refresh is defined below it and
+  // depends on state applyFrame must not be rebuilt for. A ref keeps applyFrame
+  // stable (the socket effect depends on its identity) while always calling the
+  // current refresh.
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
 
   // The app-router reuses this component instance across `/conversations/[id]`
   // navigations, so nothing else clears state on a conversation switch. Without
@@ -43,6 +62,20 @@ export function useConversation(conversationId: string) {
     setError(null);
     lastSeq.current.clear();
     resyncing.current.clear();
+    knownJobs.current.clear();
+    orphaned.current.clear();
+    if (orphanTimer.current) {
+      clearTimeout(orphanTimer.current);
+      orphanTimer.current = null;
+    }
+    // Also on unmount, so a pending refetch cannot fire against a hook that is
+    // no longer mounted.
+    return () => {
+      if (orphanTimer.current) {
+        clearTimeout(orphanTimer.current);
+        orphanTimer.current = null;
+      }
+    };
   }, [conversationId]);
 
   const patch = useCallback((id: string, changes: Partial<Message>) => {
@@ -76,8 +109,43 @@ export function useConversation(conversationId: string) {
     [conversationId, patch]
   );
 
+  // Record which jobs we now hold rows for, and heal any whose frames arrived
+  // first. Resync rather than replaying what we buffered: the row may already
+  // carry a finished answer (it does when the rows come from a refetch), and
+  // appending held-back chunks on top of that would corrupt it. The stream
+  // endpoint is authoritative for both the text and the cursor.
+  const register = useCallback(
+    (ids: string[]) => {
+      for (const id of ids) {
+        knownJobs.current.add(id);
+        if (orphaned.current.delete(id)) void resync(id);
+      }
+    },
+    [resync]
+  );
+
   const applyFrame = useCallback(
     (frame: Frame) => {
+      if (!knownJobs.current.has(frame.job_id)) {
+        // No row for this job yet. Applying the frame would patch nothing —
+        // and for a chunk it would also advance the cursor, which is the part
+        // that made this silent: the dropped text left no gap behind, so the
+        // next chunk looked perfectly in-order and the resync that exists to
+        // heal exactly this never fired. The bubble then showed an answer
+        // missing its opening until the terminal frame overwrote it.
+        orphaned.current.add(frame.job_id);
+        // The row usually lands milliseconds later from the POST we are already
+        // waiting on. If it does not, it belongs to another tab's prompt, and
+        // only a refetch will produce it.
+        if (!orphanTimer.current) {
+          orphanTimer.current = setTimeout(() => {
+            orphanTimer.current = null;
+            if (orphaned.current.size > 0) void refreshRef.current();
+          }, ORPHAN_REFETCH_MS);
+        }
+        return;
+      }
+
       const seen = lastSeq.current.get(frame.job_id) ?? 0;
 
       switch (frame.type) {
@@ -149,13 +217,16 @@ export function useConversation(conversationId: string) {
       const conversation = await api.getConversation(conversationId);
       setTitle(conversation.title);
       setRaw(conversation.messages);
+      register(conversation.messages.map((m) => m.id));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, register]);
+
+  refreshRef.current = refresh;
 
   useEffect(() => {
     void refresh();
@@ -215,12 +286,16 @@ export function useConversation(conversationId: string) {
           accepted.user_message,
           accepted.assistant_message,
         ]);
+        // Register before any further frame is handled. The job has been
+        // streaming since before this response arrived, so its opening chunks
+        // may already be sitting in `orphaned` — this is what releases them.
+        register([accepted.user_message.id, accepted.assistant_message.id]);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [conversationId]
+    [conversationId, register]
   );
 
   const regenerate = useCallback(
