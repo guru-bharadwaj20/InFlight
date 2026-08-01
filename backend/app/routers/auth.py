@@ -13,7 +13,7 @@ from ..auth import current_user
 from ..db import get_session
 from ..models import User
 from ..schemas import LoginIn, SignupIn, TokenOut, UserOut
-from ..security import create_token, hash_password, verify_password
+from ..security import create_token, hash_password_async, verify_password_async
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,7 +35,7 @@ async def signup(
     user = User(
         email=email,
         name=payload.name.strip(),
-        password_hash=hash_password(payload.password),
+        password_hash=await hash_password_async(payload.password),
     )
     session.add(user)
     try:
@@ -58,7 +58,7 @@ async def login(
 
     # One message for both "no such email" and "wrong password", so the response
     # does not reveal which emails have accounts.
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None or not await verify_password_async(payload.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "incorrect email or password")
 
     return TokenOut(token=create_token(user.id), user=UserOut.model_validate(user))

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+from anyio.to_thread import run_sync
 
 from .config import get_settings
 
@@ -29,6 +30,25 @@ def verify_password(plain: str, hashed: str) -> bool:
     except ValueError:
         # A malformed stored hash should read as "wrong password", not a 500.
         return False
+
+
+# bcrypt is deliberately slow and CPU-bound — 50-200ms of straight-line C at the
+# default cost factor. Called directly from an `async def` handler it does not
+# just make that one request slow: it blocks the worker's entire event loop, so
+# every generation currently streaming in this process stalls for the duration
+# of someone else's login. That is the exact failure this whole project exists
+# to avoid, so the request path must never call the sync versions above.
+#
+# anyio's thread pool is the one FastAPI already runs sync dependencies on, so
+# this borrows the executor that is there rather than starting another.
+
+
+async def hash_password_async(plain: str) -> str:
+    return await run_sync(hash_password, plain)
+
+
+async def verify_password_async(plain: str, hashed: str) -> bool:
+    return await run_sync(verify_password, plain, hashed)
 
 
 def create_token(user_id: str) -> str:
