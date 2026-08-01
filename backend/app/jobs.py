@@ -615,7 +615,11 @@ async def _finish(
     # it the buffer is unreadable and would otherwise sit in Redis until its TTL
     # expired. The terminal frame above already carried the final content, and
     # the row is committed, so nothing still needs it.
-    await redis_client.clear_job(job.id, conversation_id)
+    #
+    # Attachments are the exception: this row can still be regenerated, and a
+    # regenerate re-runs the same prompt, so a vision prompt still needs its
+    # images. They age out on their own TTL instead.
+    await redis_client.clear_job(job.id, conversation_id, drop_attachments=False)
 
 
 async def run_job(job_id: str, conversation_id: str) -> None:

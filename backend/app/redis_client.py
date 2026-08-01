@@ -145,10 +145,25 @@ async def job_snapshot(job_id: str) -> tuple[dict[str, str], str]:
     return state or {}, buffer or ""
 
 
-async def clear_job(job_id: str, conversation_id: str | None = None) -> None:
+async def clear_job(
+    job_id: str, conversation_id: str | None = None, *, drop_attachments: bool = True
+) -> None:
+    """Drop a job's live state, and by default its attachments too.
+
+    `drop_attachments=False` is for a job reaching a *terminal* state: the answer
+    is committed, but the row can still be regenerated, and a regenerate re-runs
+    the same prompt — which for a vision prompt means it still needs the images
+    that prompt was sent with. Deleting them on completion made regenerate answer
+    an image question with no image, silently and with no error. They expire on
+    their own via JOB_TTL_SECONDS, so this defers the cleanup rather than
+    skipping it.
+    """
     client = get_redis()
+    keys = [job_key(job_id), job_buffer_key(job_id)]
+    if drop_attachments:
+        keys.append(job_attachments_key(job_id))
     async with client.pipeline(transaction=True) as pipe:
-        pipe.delete(job_key(job_id), job_buffer_key(job_id), job_attachments_key(job_id))
+        pipe.delete(*keys)
         if conversation_id:
             pipe.srem(conversation_active_key(conversation_id), job_id)
         await pipe.execute()
